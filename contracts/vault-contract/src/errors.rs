@@ -49,6 +49,8 @@ pub enum ValidationError {
     /// Thrown when token addresses (deposit/reward) are misconfigured (e.g., identical).
     InvalidTokenConfiguration,
     InsufficientRewardAmount,
+    /// Thrown when a lock duration is zero.
+    InvalidLockDuration,
 }
 
 /// Specific errors related to balance checks.
@@ -132,6 +134,8 @@ pub enum VaultError {
     RewardsNotVested = 17,
     /// Reward distribution amount is too small
     InsufficientRewardAmount = 18,
+    /// Lock duration must be greater than zero
+    InvalidLockDuration = 19,
 }
 
 impl VaultError {
@@ -209,6 +213,10 @@ impl VaultError {
                 category: ErrorCategory::Validation,
                 message: "reward distribution amount is too small",
             },
+            Self::InvalidLockDuration => ErrorInfo {
+                category: ErrorCategory::Validation,
+                message: "lock duration must be greater than zero",
+            },
         }
     }
 
@@ -253,6 +261,7 @@ impl From<ValidationError> for VaultError {
             ValidationError::InvalidAddress => Self::InvalidAddress,
             ValidationError::InvalidTokenConfiguration => Self::InvalidTokenConfiguration,
             ValidationError::InsufficientRewardAmount => Self::InsufficientRewardAmount,
+            ValidationError::InvalidLockDuration => Self::InvalidLockDuration,
         }
     }
 }

@@ -36,13 +36,25 @@ pub enum DataKey {
     /// Pause flag
     IsPaused,
     /// User balance
-    UserBalance(Address),
+    UserLiquidBalance(Address),
     /// User's last synced reward index
     UserRewardIndex(Address),
     /// User's accrued but unvested rewards
     UserAccruedRewards(Address),
     /// User's last reward distribution timestamp (for vesting calculation)
     UserLastRewardTimestamp(Address),
+    /// User's time-locked deposits
+    UserLocks(Address),
+}
+
+/// A time-locked portion of a user's deposit.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Lock {
+    pub amount: i128,
+    pub unlock_timestamp: u64,
+    /// Reserved for future reward multiplier feature.
+    pub reward_multiplier: u32,
 }
 
 /// The global state of the vault contract.
@@ -271,16 +283,20 @@ pub fn exit_non_reentrant(e: &Env) {
 
 pub fn get_user_position(e: &Env, user: &Address) -> Result<UserPosition, VaultError> {
     require_initialized(e)?;
-    Ok(get_user_position_unchecked(e, user))
+    get_user_position_unchecked(e, user)
 }
 
-pub fn get_user_position_unchecked(e: &Env, user: &Address) -> UserPosition {
-    let balance_key = DataKey::UserBalance(user.clone());
+pub fn get_user_position_unchecked(e: &Env, user: &Address) -> Result<UserPosition, VaultError> {
+    let liquid_balance = get_liquid_balance_unchecked(e, user);
+    let locks = get_user_locks_unchecked(e, user);
+    let locked_balance: i128 = locks.iter().map(|lock: Lock| lock.amount).sum();
+    let total_balance = liquid_balance
+        .checked_add(locked_balance)
+        .ok_or(ArithmeticError::Overflow)?;
+
     let reward_index_key = DataKey::UserRewardIndex(user.clone());
     let accrued_rewards_key = DataKey::UserAccruedRewards(user.clone());
     let last_reward_timestamp_key = DataKey::UserLastRewardTimestamp(user.clone());
-
-    let balance = e.storage().persistent().get(&balance_key).unwrap_or(0_i128);
     let reward_index = e
         .storage()
         .persistent()
@@ -297,9 +313,6 @@ pub fn get_user_position_unchecked(e: &Env, user: &Address) -> UserPosition {
         .get(&last_reward_timestamp_key)
         .unwrap_or(0_u64);
 
-    if balance != 0 {
-        bump_persistent_ttl(e, &balance_key);
-    }
     if reward_index != 0 {
         bump_persistent_ttl(e, &reward_index_key);
     }
@@ -310,26 +323,18 @@ pub fn get_user_position_unchecked(e: &Env, user: &Address) -> UserPosition {
         bump_persistent_ttl(e, &last_reward_timestamp_key);
     }
 
-    UserPosition {
-        balance,
+    Ok(UserPosition {
+        balance: total_balance,
         reward_index,
         accrued_rewards,
         last_reward_timestamp,
-    }
+    })
 }
 
 pub fn set_user_position(e: &Env, user: &Address, position: &UserPosition) {
-    let balance_key = DataKey::UserBalance(user.clone());
     let reward_index_key = DataKey::UserRewardIndex(user.clone());
     let accrued_rewards_key = DataKey::UserAccruedRewards(user.clone());
     let last_reward_timestamp_key = DataKey::UserLastRewardTimestamp(user.clone());
-
-    if position.balance == 0 {
-        e.storage().persistent().remove(&balance_key);
-    } else {
-        e.storage().persistent().set(&balance_key, &position.balance);
-        bump_persistent_ttl(e, &balance_key);
-    }
 
     if position.reward_index == 0 {
         e.storage().persistent().remove(&reward_index_key);
@@ -356,7 +361,64 @@ pub fn set_user_position(e: &Env, user: &Address, position: &UserPosition) {
 }
 
 pub fn get_user_balance(e: &Env, user: &Address) -> Result<i128, VaultError> {
-    Ok(get_user_position(e, user)?.balance)
+    let position = get_user_position(e, user)?;
+    Ok(position.balance)
+}
+
+pub fn get_liquid_balance(e: &Env, user: &Address) -> Result<i128, VaultError> {
+    require_initialized(e)?;
+    Ok(get_liquid_balance_unchecked(e, user))
+}
+
+pub fn get_liquid_balance_unchecked(e: &Env, user: &Address) -> i128 {
+    let key = DataKey::UserLiquidBalance(user.clone());
+    let balance = e.storage().persistent().get(&key).unwrap_or(0_i128);
+    if balance != 0 {
+        bump_persistent_ttl(e, &key);
+    }
+    balance
+}
+
+fn set_liquid_balance(e: &Env, user: &Address, amount: i128) {
+    let key = DataKey::UserLiquidBalance(user.clone());
+    if amount == 0 {
+        e.storage().persistent().remove(&key);
+    } else {
+        e.storage().persistent().set(&key, &amount);
+        bump_persistent_ttl(e, &key);
+    }
+}
+
+pub fn get_locked_balance(e: &Env, user: &Address) -> Result<i128, VaultError> {
+    require_initialized(e)?;
+    let locks = get_user_locks_unchecked(e, user);
+    let locked_amount: i128 = locks
+        .iter()
+        .filter(|l| l.unlock_timestamp > e.ledger().timestamp())
+        .map(|l| l.amount)
+        .sum();
+    Ok(locked_amount)
+}
+
+pub fn get_user_locks_unchecked(e: &Env, user: &Address) -> soroban_sdk::Vec<Lock> {
+    let key = DataKey::UserLocks(user.clone());
+    let locks = e
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| soroban_sdk::Vec::new(e));
+    if !locks.is_empty() {
+        bump_persistent_ttl(e, &key);
+    }
+    locks
+}
+
+fn set_user_locks(e: &Env, user: &Address, locks: &soroban_sdk::Vec<Lock>) {
+    let key = DataKey::UserLocks(user.clone());
+    e.storage().persistent().set(&key, locks);
+    if !locks.is_empty() {
+        bump_persistent_ttl(e, &key);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -369,14 +431,19 @@ pub fn store_deposit(
     amount: i128,
 ) -> Result<(VaultState, UserPosition), VaultError> {
     let state = get_state(e)?;
-    let mut position = get_user_position_unchecked(e, user);
-    
+    let mut position = get_user_position_unchecked(e, user)?;
+
     // Accrue rewards earned up to this point using the old balance.
     accrue_position_rewards(e, &state, &mut position)?;
 
-    // Update balance and total deposits.
+    // Update total balance for reward calculation purposes in the returned position.
     position.balance = position
         .balance
+        .checked_add(amount)
+        .ok_or(ArithmeticError::Overflow)?;
+
+    // Update liquid balance and total contract deposits.
+    let new_liquid_balance = get_liquid_balance_unchecked(e, user)
         .checked_add(amount)
         .ok_or(ArithmeticError::Overflow)?;
     let next_total = state
@@ -384,7 +451,7 @@ pub fn store_deposit(
         .checked_add(amount)
         .ok_or(ArithmeticError::Overflow)?;
 
-    // Persist changes.
+    set_liquid_balance(e, user, new_liquid_balance);
     set_total_deposits(e, next_total);
     set_user_position(e, user, &position);
 
@@ -403,18 +470,27 @@ pub fn store_withdraw(
     amount: i128,
 ) -> Result<(VaultState, UserPosition), VaultError> {
     let state = get_state(e)?;
-    let mut position = get_user_position_unchecked(e, user);
-    
+    let mut position = get_user_position_unchecked(e, user)?;
+
     // Accrue rewards earned up to this point using the old balance.
     accrue_position_rewards(e, &state, &mut position)?;
 
-    if position.balance < amount {
+    // Process any expired locks, moving them to the liquid balance.
+    unlock_expired_locks(e, user)?;
+
+    let liquid_balance = get_liquid_balance_unchecked(e, user);
+    if liquid_balance < amount {
         return Err(BalanceError::InsufficientBalance.into());
     }
-    
-    // Update balance and total deposits.
+
+    // Update total balance for reward calculation purposes.
     position.balance = position
         .balance
+        .checked_sub(amount)
+        .ok_or(ArithmeticError::Overflow)?;
+
+    // Update liquid balance and total contract deposits.
+    let new_liquid_balance = liquid_balance
         .checked_sub(amount)
         .ok_or(ArithmeticError::Overflow)?;
     let next_total = state
@@ -422,7 +498,7 @@ pub fn store_withdraw(
         .checked_sub(amount)
         .ok_or(ArithmeticError::Overflow)?;
 
-    // Persist changes.
+    set_liquid_balance(e, user, new_liquid_balance);
     set_total_deposits(e, next_total);
     set_user_position(e, user, &position);
 
@@ -433,6 +509,79 @@ pub fn store_withdraw(
         },
         position,
     ))
+}
+
+// ---------------------------------------------------------------------------
+// Lock/Unlock Logic
+// ---------------------------------------------------------------------------
+
+pub fn store_lock(
+    e: &Env,
+    user: &Address,
+    amount: i128,
+    duration: u64,
+) -> Result<(), VaultError> {
+    let state = get_state(e)?;
+    let mut position = get_user_position_unchecked(e, user)?;
+
+    // Accrue rewards before changing balance distribution
+    accrue_position_rewards(e, &state, &mut position)?;
+    set_user_position(e, user, &position);
+
+    let liquid_balance = get_liquid_balance_unchecked(e, user);
+    if liquid_balance < amount {
+        return Err(BalanceError::InsufficientBalance.into());
+    }
+
+    // Move funds from liquid to a new lock
+    let new_liquid_balance = liquid_balance
+        .checked_sub(amount)
+        .ok_or(ArithmeticError::Overflow)?;
+    set_liquid_balance(e, user, new_liquid_balance);
+
+    let mut locks = get_user_locks_unchecked(e, user);
+    locks.push_back(Lock {
+        amount,
+        unlock_timestamp: e
+            .ledger()
+            .timestamp()
+            .checked_add(duration)
+            .ok_or(ArithmeticError::Overflow)?,
+        reward_multiplier: 0, // Not implemented yet
+    });
+    set_user_locks(e, user, &locks);
+
+    // Note: Total balance and total_deposits do not change.
+    Ok(())
+}
+
+pub fn unlock_expired_locks(e: &Env, user: &Address) -> Result<i128, VaultError> {
+    let current_timestamp = e.ledger().timestamp();
+    let locks = get_user_locks_unchecked(e, user);
+
+    let mut unlocked_amount: i128 = 0;
+    let mut new_locks = soroban_sdk::Vec::new(e);
+
+    for lock in locks.iter() {
+        if lock.unlock_timestamp <= current_timestamp {
+            unlocked_amount = unlocked_amount
+                .checked_add(lock.amount)
+                .ok_or(ArithmeticError::Overflow)?;
+        } else {
+            new_locks.push_back(lock);
+        }
+    }
+
+    if unlocked_amount > 0 {
+        let liquid_balance = get_liquid_balance_unchecked(e, user);
+        let new_liquid_balance = liquid_balance
+            .checked_add(unlocked_amount)
+            .ok_or(ArithmeticError::Overflow)?;
+        set_liquid_balance(e, user, new_liquid_balance);
+        set_user_locks(e, user, &new_locks);
+    }
+
+    Ok(unlocked_amount)
 }
 
 // ---------------------------------------------------------------------------
@@ -494,8 +643,8 @@ pub fn calculate_vested_rewards(
 
 pub fn store_claimable_rewards(e: &Env, user: &Address) -> Result<i128, VaultError> {
     let state = get_state(e)?;
-    let mut position = get_user_position_unchecked(e, user);
-    
+    let mut position = get_user_position_unchecked(e, user)?;
+
     // Accrue all rewards earned up to the current global index.
     accrue_position_rewards(e, &state, &mut position)?;
 
@@ -521,8 +670,8 @@ pub fn store_claimable_rewards(e: &Env, user: &Address) -> Result<i128, VaultErr
 pub fn preview_user_rewards(e: &Env, user: &Address) -> Result<UserRewardSnapshot, VaultError> {
     require_initialized(e)?;
     let state = get_state(e)?;
-    let mut position = get_user_position_unchecked(e, user);
-    
+    let mut position = get_user_position_unchecked(e, user)?;
+
     // Calculate accrued rewards without modifying state
     accrue_position_rewards(e, &state, &mut position)?;
 

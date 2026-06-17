@@ -28,7 +28,7 @@ The contract stores:
 
 - global configuration: admin address, deposit token, reward token, initialization flag
 - global accounting: `total_deposits`, `reward_index`
-- per-user accounting: `user_balance`, `user_reward_index`, `user_rewards`
+- per-user accounting: `user_liquid_balance`, `user_locks`, `user_reward_index`, `user_rewards`
 
 See [contract-storage.md](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/docs/contract-storage.md) for the full storage breakdown.
 
@@ -44,6 +44,23 @@ When a user interacts, the contract compares:
 - that user's saved `user_reward_index`
 
 The difference tells the contract how much new reward has accrued since the user's last interaction.
+
+## Time-Locked Deposits
+
+To incentivize long-term deposits, the vault supports time-locking funds. Users can lock a portion of their deposited assets for a configurable duration.
+
+- **Locked funds are not withdrawable** until the lock period expires.
+- **Locked funds continue to earn rewards** based on the standard reward index mechanism.
+- The design includes support for future **reward multipliers** on locked funds, though this is not yet implemented in the reward calculation.
+
+### Lock and Unlock Flow
+
+1.  A user deposits funds, which are initially liquid.
+2.  The user calls `lock(amount, duration)` to move funds from their liquid balance to a new lock.
+3.  The lock has an `unlock_timestamp`. Before this time, the funds are inaccessible for withdrawal.
+4.  After the timestamp passes, the lock is considered "expired".
+5.  The `withdraw` function automatically processes expired locks, moving the funds back to the user's liquid balance before processing the withdrawal.
+6.  Users can also manually trigger this process by calling `unlock_expired()`.
 
 ## Reward Accounting Logic
 
@@ -162,11 +179,13 @@ The `distribute_rewards` function is a critical security-sensitive operation tha
 ### Why Minimum Amount Matters
 
 Without a minimum amount check, a malicious actor could:
+
 - Spam small reward distributions to artificially inflate the `reward_index` calculation frequency
 - Grief the network by forcing unnecessary state updates
 - Waste gas on the Stellar network
 
 The 100,000 stroop minimum:
+
 - Prevents dust attacks while remaining accessible for legitimate admin operations
 - Aligns with Stellar's native asset precision (1 stroop = 10^-7 XLM)
 - Is small enough for testing but large enough to deter spam
@@ -184,12 +203,12 @@ pub fn distribute_rewards(e: Env, amount: i128) -> Result<i128, VaultError>
 
 ### Error Cases
 
-| Error | Condition |
-|-------|-----------|
-| `NotInitialized` | Vault not initialized |
-| `InvalidAmount` | Amount is zero or negative |
-| `InsufficientRewardAmount` | Amount < 100,000 stroops |
-| `Unauthorized` | Caller is not the admin |
+| Error                      | Condition                  |
+| -------------------------- | -------------------------- |
+| `NotInitialized`           | Vault not initialized      |
+| `InvalidAmount`            | Amount is zero or negative |
+| `InsufficientRewardAmount` | Amount < 100,000 stroops   |
+| `Unauthorized`             | Caller is not the admin    |
 
 The following tests verify this logic:
 
@@ -252,7 +271,7 @@ vault.initialize(&admin, &deposit_token_id, &reward_token_id);
 
 ### `deposit(from, amount) -> Result<(), VaultError>`
 
-Moves deposit tokens from the user into the vault and increases their recorded vault balance.
+Moves deposit tokens from the user into the vault and increases their recorded **liquid** vault balance.
 
 Validations:
 
@@ -271,7 +290,7 @@ Accounting:
 3. Requires authorization from `from`.
 4. Accrues any rewards already owed to `from`.
 5. Transfers `deposit_token` from the user into the contract.
-6. Increases `user_balance(from)`.
+6. Increases `user_liquid_balance(from)`.
 7. Increases `total_deposits`.
 8. Emits a `deposit` event.
 
@@ -290,7 +309,7 @@ assert_eq!(vault.total_deposits(), 400);
 
 ### `withdraw(to, amount) -> Result<(), VaultError>`
 
-Moves deposit tokens from the vault back to the user and reduces their recorded vault balance.
+Moves deposit tokens from the vault back to the user from their **liquid** balance.
 
 Step-by-step:
 
@@ -298,7 +317,7 @@ Validations:
 
 - `amount > 0`
 - Requires `to` authorization
-- Fails with `InsufficientBalance` if `amount > balance(to)`
+- Fails with `InsufficientBalance` if `amount > liquid_balance(to)`
 - Fails with `InsufficientContractBalance` if the vault cannot cover the token transfer
 
 Accounting:
@@ -310,16 +329,17 @@ Accounting:
 2. Validates `amount > 0`.
 3. Requires authorization from `to`.
 4. Accrues any rewards already owed to `to`.
-5. Checks the user has enough deposited balance.
-6. Decreases `user_balance(to)`.
-7. Decreases `total_deposits`.
-8. Transfers `deposit_token` back to the user.
-9. Emits a `withdraw` event.
+5. **Processes expired locks for `to`**, updating their liquid balance.
+6. Checks the user has enough **liquid** deposited balance.
+7. Decreases `user_liquid_balance(to)`.
+8. Decreases `total_deposits`.
+9. Transfers `deposit_token` back to the user.
+10. Emits a `withdraw` event.
 
 Fails when:
 
 - the amount is zero or negative
-- the user tries to withdraw more than their balance
+- the user tries to withdraw more than their **liquid** balance
 
 Example:
 
@@ -462,6 +482,7 @@ All vault events use a **two-topic design** for efficient filtering:
 - **Data Payload**: Structured tuple containing event-specific data (user_address, amount, timestamp)
 
 This design allows indexers to rapidly filter by:
+
 - Protocol identifier for vault-specific events
 - Action type for specific state changes
 
@@ -470,10 +491,12 @@ This design allows indexers to rapidly filter by:
 ### Event: `Initialize`
 
 **Topics:**
+
 - Topic 1: `Symbol("AxionVault")`
 - Topic 2: `Symbol("Initialize")`
 
 **Data Payload (XDR Struct):**
+
 ```rust
 struct InitializeEvent {
     admin: Address,
@@ -488,10 +511,12 @@ struct InitializeEvent {
 ### Event: `Deposit`
 
 **Topics:**
+
 - Topic 1: `Symbol("AxionVault")`
 - Topic 2: `Symbol("Deposit")`
 
 **Data Payload (XDR Struct):**
+
 ```rust
 struct DepositEvent {
     user_address: Address,
@@ -505,10 +530,12 @@ struct DepositEvent {
 ### Event: `Withdraw`
 
 **Topics:**
+
 - Topic 1: `Symbol("AxionVault")`
 - Topic 2: `Symbol("Withdraw")`
 
 **Data Payload (XDR Struct):**
+
 ```rust
 struct WithdrawEvent {
     user_address: Address,
@@ -522,10 +549,12 @@ struct WithdrawEvent {
 ### Event: `Distribute`
 
 **Topics:**
+
 - Topic 1: `Symbol("AxionVault")`
 - Topic 2: `Symbol("Distribute")`
 
 **Data Payload (XDR Struct):**
+
 ```rust
 struct DistributeEvent {
     caller: Address,
@@ -539,10 +568,12 @@ struct DistributeEvent {
 ### Event: `Claim`
 
 **Topics:**
+
 - Topic 1: `Symbol("AxionVault")`
 - Topic 2: `Symbol("Claim")`
 
 **Data Payload (XDR Struct):**
+
 ```rust
 struct ClaimEvent {
     user_address: Address,
@@ -567,6 +598,7 @@ Off-chain indexers should:
 Each event data payload is serialized as a Soroban ContractData XDR type. The indexer receives the full XDR envelope and must deserialize the data payload according to the struct definitions above.
 
 Example (pseudocode):
+
 ```
 event.topics[0] == Symbol("AxionVault")
 event.topics[1] == Symbol("Deposit")

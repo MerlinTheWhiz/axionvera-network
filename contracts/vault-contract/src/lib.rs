@@ -1,11 +1,10 @@
 #![no_std]
 
 pub mod errors;
-mod events;
-mod storage;
-
 #[cfg(test)]
 mod test;
+mod events;
+mod storage;
 
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
 
@@ -140,6 +139,46 @@ impl VaultContract {
         })
     }
 
+    pub fn lock(
+        e: Env,
+        from: Address,
+        amount: i128,
+        duration_seconds: u64,
+    ) -> Result<(), VaultError> {
+        storage::require_not_paused(&e)?;
+        storage::require_initialized(&e)?;
+        validate_positive_amount(amount)?;
+        if duration_seconds == 0 {
+            return Err(ValidationError::InvalidLockDuration.into());
+        }
+        from.require_auth();
+
+        with_non_reentrant(&e, || {
+            let unlock_timestamp = e
+                .ledger()
+                .timestamp()
+                .checked_add(duration_seconds)
+                .ok_or(VaultError::MathOverflow)?;
+            storage::store_lock(&e, &from, amount, duration_seconds)?;
+            events::emit_lock(&e, from, amount, unlock_timestamp);
+            Ok(())
+        })
+    }
+
+    pub fn unlock_expired(e: Env, user: Address) -> Result<i128, VaultError> {
+        storage::require_not_paused(&e)?;
+        storage::require_initialized(&e)?;
+        user.require_auth();
+
+        with_non_reentrant(&e, || {
+            let unlocked_amount = storage::unlock_expired_locks(&e, &user)?;
+            if unlocked_amount > 0 {
+                events::emit_unlock(&e, user, unlocked_amount);
+            }
+            Ok(unlocked_amount)
+        })
+    }
+
     pub fn claim_rewards(e: Env, user: Address) -> Result<i128, VaultError> {
         storage::require_not_paused(&e)?;
         storage::require_initialized(&e)?;
@@ -163,6 +202,14 @@ impl VaultContract {
 
     pub fn balance(e: Env, user: Address) -> Result<i128, VaultError> {
         storage::get_user_balance(&e, &user)
+    }
+
+    pub fn liquid_balance(e: Env, user: Address) -> Result<i128, VaultError> {
+        storage::get_liquid_balance(&e, &user)
+    }
+
+    pub fn locked_balance(e: Env, user: Address) -> Result<i128, VaultError> {
+        storage::get_locked_balance(&e, &user)
     }
 
     pub fn total_deposits(e: Env) -> Result<i128, VaultError> {
