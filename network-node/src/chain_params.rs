@@ -94,6 +94,16 @@ pub struct ScheduledUpgradeRecord {
     pub patch: NetworkParametersPatch,
 }
 
+/// Permissioned roles for protocol administration and operations.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Role {
+    /// Can manage roles and all protocol parameters.
+    Admin,
+    /// Can perform operational tasks such as proposing parameter updates.
+    Operator,
+}
+
 /// In-memory registry: genesis base + scheduled activations by block height.
 #[derive(Debug, Clone)]
 pub struct ChainParameterRegistry {
@@ -107,18 +117,29 @@ pub struct ChainParameterRegistry {
     activations: BTreeMap<u64, NetworkParametersPatch>,
     /// All submitted upgrades (including already activated) for history APIs.
     upgrade_history: Vec<ScheduledUpgradeRecord>,
+    /// Role-based access control mapping.
+    roles: std::collections::BTreeMap<String, Role>,
 }
 
 impl ChainParameterRegistry {
     pub fn from_genesis_file(path: &Path) -> Result<Self, String> {
         let raw = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read genesis file {}: {}", path.display(), e))?;
-        let doc: GenesisDocument = serde_json::from_str(&raw)
-            .map_err(|e| format!("Invalid genesis JSON: {}", e))?;
+        let doc: GenesisDocument =
+            serde_json::from_str(&raw).map_err(|e| format!("Invalid genesis JSON: {}", e))?;
         Ok(Self::from_genesis_document(doc))
     }
 
     pub fn from_genesis_document(doc: GenesisDocument) -> Self {
+        let mut roles = std::collections::BTreeMap::new();
+
+        // Seed initial admins from the governance config if it defines admin keys
+        if let GovernanceConfig::AdminKeys { keys } = &doc.parameter_upgrade_governance {
+            for key in keys {
+                roles.insert(normalize_id(key), Role::Admin);
+            }
+        }
+
         Self {
             chain_id: doc.chain_id,
             governance: doc.parameter_upgrade_governance,
@@ -127,6 +148,7 @@ impl ChainParameterRegistry {
             genesis_parameters: doc.network_parameters.clone(),
             activations: BTreeMap::new(),
             upgrade_history: Vec::new(),
+            roles,
         }
     }
 
@@ -151,6 +173,10 @@ impl ChainParameterRegistry {
 
     pub fn chain_id(&self) -> &str {
         &self.chain_id
+    }
+
+    pub fn governance_config(&self) -> &GovernanceConfig {
+        &self.governance
     }
 
     pub fn current_height(&self) -> u64 {
@@ -195,6 +221,45 @@ impl ChainParameterRegistry {
         self.current_height = height;
     }
 
+    /// Grants a role to a target address. Only Admins can perform this action.
+    pub fn grant_role(&mut self, caller: &str, target: String, role: Role) -> Result<(), String> {
+        self.check_role(caller, Role::Admin)?;
+        let target_id = normalize_id(&target);
+        self.roles.insert(target_id, role);
+        tracing::info!(caller = %caller, target = %target, role = ?role, "Role granted");
+        Ok(())
+    }
+
+    /// Revokes a role from a target address. Only Admins can perform this action.
+    pub fn revoke_role(&mut self, caller: &str, target: &str) -> Result<(), String> {
+        self.check_role(caller, Role::Admin)?;
+        let target_id = normalize_id(target);
+        if self.roles.remove(&target_id).is_some() {
+            tracing::info!(caller = %caller, target = %target, "Role revoked");
+            Ok(())
+        } else {
+            Err("Role not found for target".to_string())
+        }
+    }
+
+    /// Checks if the given address has at least the required role.
+    /// Admins implicitly satisfy Operator requirements.
+    pub fn check_role(&self, address: &str, required_role: Role) -> Result<(), String> {
+        let addr = normalize_id(address);
+        let role = self
+            .roles
+            .get(&addr)
+            .ok_or_else(|| format!("Address {} has no permissioned roles", address))?;
+
+        match (role, required_role) {
+            (Role::Admin, _) => Ok(()),
+            (Role::Operator, Role::Operator) => Ok(()),
+            (Role::Operator, Role::Admin) => {
+                Err("Operator role insufficient for admin action".to_string())
+            }
+        }
+    }
+
     /// Submit a parameter upgrade: validates governance, delay, and non-empty patch; schedules activation.
     pub fn submit_parameter_upgrade(
         &mut self,
@@ -206,6 +271,10 @@ impl ChainParameterRegistry {
         if !patch_has_changes(&patch) {
             return Err("parameter patch must set at least one field".to_string());
         }
+
+        // Enforce role-based permissioning for upgrades
+        self.check_role(proposer_address, Role::Operator)
+            .map_err(|e| format!("Permission denied: {}", e))?;
 
         self.authorize_upgrade(proposer_address, dao_voter_addresses)?;
 
@@ -242,11 +311,15 @@ impl ChainParameterRegistry {
         match &self.governance {
             GovernanceConfig::AdminKeys { keys } => {
                 if dao_voter_addresses.iter().any(|v| !v.is_empty()) {
-                    return Err("dao_voter_addresses must be empty for admin_keys governance".to_string());
+                    return Err(
+                        "dao_voter_addresses must be empty for admin_keys governance".to_string(),
+                    );
                 }
                 let p = normalize_id(proposer_address);
                 if p.is_empty() {
-                    return Err("proposer_address is required for admin_keys governance".to_string());
+                    return Err(
+                        "proposer_address is required for admin_keys governance".to_string()
+                    );
                 }
                 let ok = keys.iter().any(|k| normalize_id(k) == p);
                 if !ok {
@@ -288,7 +361,7 @@ impl ChainParameterRegistry {
     }
 }
 
-fn normalize_id(s: &str) -> String {
+pub fn normalize_id(s: &str) -> String {
     s.trim().to_ascii_lowercase()
 }
 
@@ -368,5 +441,37 @@ mod tests {
         r.submit_parameter_upgrade(patch, 12, "", &["m1".to_string(), "m2".to_string()])
             .unwrap();
         assert_eq!(r.pending_upgrades().len(), 1);
+    }
+
+    #[test]
+    fn test_role_enforcement() {
+        let mut r = test_registry_admin(); // "Admin_ABC" is Admin
+        let patch = NetworkParametersPatch {
+            min_base_fee: Some(10),
+            ..Default::default()
+        };
+
+        // Operator can propose
+        r.grant_role("Admin_ABC", "operator_1".to_string(), Role::Operator)
+            .unwrap();
+        r.submit_parameter_upgrade(patch.clone(), 106, "operator_1", &[])
+            .unwrap();
+
+        // Random user cannot propose
+        let result = r.submit_parameter_upgrade(patch.clone(), 110, "random_user", &[]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Permission denied"));
+
+        // Operator cannot grant roles
+        let result = r.grant_role("operator_1", "other".to_string(), Role::Operator);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("insufficient for admin action"));
+
+        // Admin can revoke
+        r.revoke_role("Admin_ABC", "operator_1").unwrap();
+        let result = r.submit_parameter_upgrade(patch, 120, "operator_1", &[]);
+        assert!(result.is_err());
     }
 }
