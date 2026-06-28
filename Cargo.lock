@@ -960,6 +960,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "axionvera-treasury"
+version = "0.1.0"
+dependencies = [
+ "axionvera-events",
+ "axionvera-interfaces",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "axionvera-vault-contract"
 version = "0.1.0"
 dependencies = [

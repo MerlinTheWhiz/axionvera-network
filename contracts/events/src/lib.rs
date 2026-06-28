@@ -28,6 +28,9 @@ pub const ACT_ASSET_DEPOSIT: Symbol = symbol_short!("asset_dep");
 pub const ACT_ASSET_WITHDRAW: Symbol = symbol_short!("asset_wd");
 pub const ACT_ASSET_DISTRIBUTE: Symbol = symbol_short!("ast_dist");
 pub const ACT_ASSET_CLAIM: Symbol = symbol_short!("asset_clm");
+pub const ACT_TREASURY_INIT: Symbol = symbol_short!("tr_init");
+pub const ACT_TREASURY_STRATEGY: Symbol = symbol_short!("tr_strat");
+pub const ACT_TREASURY_DISTRIBUTE: Symbol = symbol_short!("tr_dist");
 
 // ---------------------------------------------------------------------------
 // Storage keys used by the indexing layer
@@ -204,6 +207,35 @@ pub struct UnlockEvent {
     pub event_version: u32,
     pub user: Address,
     pub amount: i128,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreasuryInitializedEvent {
+    pub event_version: u32,
+    pub admin: Address,
+    pub asset: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreasuryStrategyConfiguredEvent {
+    pub event_version: u32,
+    pub strategy_id: BytesN<32>,
+    pub rule_count: u32,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreasuryDistributionEvent {
+    pub event_version: u32,
+    pub distribution_id: BytesN<32>,
+    pub strategy_id: BytesN<32>,
+    pub asset: Address,
+    pub total_amount: i128,
     pub timestamp: u64,
 }
 
