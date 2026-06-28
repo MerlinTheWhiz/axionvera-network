@@ -15,7 +15,7 @@ The contract uses two Soroban storage areas:
 
 ## Storage Keys
 
-The keys are defined in [storage.rs](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/contracts/vault-contract/src/storage.rs) as the `DataKey` enum.
+The keys are defined in [storage.rs](../contracts/vault-contract/src/storage.rs) as the `DataKey` enum.
 
 ### Global Keys
 
@@ -165,6 +165,6 @@ When a user interacts, reward accrual roughly follows this logic:
 
 ## Where To Read Next
 
-- [contract-spec.md](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/docs/contract-spec.md)
-- [lib.rs](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/contracts/vault-contract/src/lib.rs)
-- [storage.rs](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/contracts/vault-contract/src/storage.rs)
+- [contract-spec.md](contract-spec.md)
+- [lib.rs](../contracts/vault-contract/src/lib.rs)
+- [storage.rs](../contracts/vault-contract/src/storage.rs)

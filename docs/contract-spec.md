@@ -1,263 +1,332 @@
-# Vault Contract Specification
+# Protocol Specification
 
-This document explains the Soroban vault contract in practical terms for contributors who are new to the codebase.
+This document is the formal specification for the Axionvera vault contract implemented in [../contracts/vault-contract/src/lib.rs](../contracts/vault-contract/src/lib.rs) and [../contracts/vault-contract/src/storage.rs](../contracts/vault-contract/src/storage.rs). It is intended for protocol review, future audits, and contributor onboarding.
 
-The vault supports four core user flows:
+## 1. Purpose and Scope
 
-1. A user deposits the `deposit_token`.
-2. The contract tracks that user's vault balance.
-3. An admin distributes rewards using the `reward_token`.
-4. Users later claim their accrued rewards.
+The vault contract implements a reward-bearing deposit primitive for Soroban. It supports:
 
-If you want the storage-level view first, read [contract-storage.md](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/docs/contract-storage.md).
+- depositing an asset into the vault,
+- withdrawing principal later,
+- locking funds for a configurable duration,
+- distributing rewards lazily through an index-based accounting model,
+- claiming vested rewards,
+- managing admin transitions, pause state, and contract upgrades.
 
-## Contract Purpose
+The current implementation also includes multi-asset support for depositing and distributing rewards across supported assets.
 
-The contract acts like a token vault with lazy reward accounting.
+## 2. Actors and Trust Model
 
-- Deposits are tracked 1:1 in token units.
-- Rewards are not pushed to every user immediately.
-- Instead, the contract updates a global `reward_index`.
-- Each user realizes their share when they interact again through `deposit`, `withdraw`, or `claim_rewards`.
+- Admin: the privileged address allowed to distribute rewards, pause or unpause the contract, and initiate upgrades.
+- User: an address that can deposit, withdraw, lock, unlock expired locks, and claim rewards.
+- Token contracts: the deposit and reward token implementations, expected to honor standard token transfer semantics.
+- Ledger/runtime: provides timestamps, authentication, and storage semantics.
 
-This approach keeps reward distribution efficient because the contract does not need to iterate through every depositor.
+The protocol assumes that:
 
-## Storage Model Summary
+- token contracts do not silently alter balances outside the declared transfer API,
+- user authentication is enforced by the runtime,
+- the admin is trusted to supply legitimate reward tokens and to act honestly,
+- the contract’s reentrancy guard prevents callback-based state corruption.
 
-The contract stores:
+## 3. State Model
 
-- global configuration: admin address, deposit token, reward token, initialization flag
-- global accounting: `total_deposits`, `reward_index`
-- per-user accounting: `user_liquid_balance`, `user_locks`, `user_reward_index`, `user_rewards`
+### 3.1 Global state
 
-See [contract-storage.md](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/docs/contract-storage.md) for the full storage breakdown.
+The contract stores the following instance-level state:
 
-## Reward Accounting Model
+- `admin`: privileged admin address
+- `deposit_token`: asset accepted for deposits/withdrawals
+- `reward_token`: asset distributed as rewards
+- `total_deposits`: aggregate deposited principal across users
+- `reward_index`: global reward index, monotonically increasing
+- `vesting_period`: number of seconds before accrued rewards are fully vested
+- `target_deposits`: baseline value used by the utilization multiplier curve
+- `utilization_multipliers`: ordered curve points mapping utilization to reward multiplier
+- `is_paused`: emergency pause flag
+- `reentrancy_guard`: runtime guard to block recursive entry
 
-Rewards use an index scaled by `1e18`:
+### 3.2 User state
 
-`reward_index += amount * 1e18 / total_deposits`
+Each user has a persistent position with:
 
-When a user interacts, the contract compares:
+- `balance`: total deposited balance (liquid + locked)
+- `reward_index`: the last global reward index the user was synced to
+- `accrued_rewards`: rewards earned but not yet fully vested/claimed
+- `last_reward_timestamp`: timestamp of the most recent reward accrual
 
-- the global `reward_index`
-- that user's saved `user_reward_index`
+Liquid balances are tracked separately from locked balances:
 
-The difference tells the contract how much new reward has accrued since the user's last interaction.
+- `UserLiquidBalance(user)`: immediately withdrawable portion
+- `UserLocks(user)`: list of lock entries with `{ amount, unlock_timestamp, reward_multiplier }`
 
-## Time-Locked Deposits
+## 4. Protocol Invariants
 
-To incentivize long-term deposits, the vault supports time-locking funds. Users can lock a portion of their deposited assets for a configurable duration.
+The contract enforces the following invariants:
 
-- **Locked funds are not withdrawable** until the lock period expires.
-- **Locked funds continue to earn rewards** based on the standard reward index mechanism.
-- The design includes support for future **reward multipliers** on locked funds, though this is not yet implemented in the reward calculation.
+1. Principal conservation:
+   - the contract’s total deposits equal the sum of all user balances that are still active in the vault.
+2. Reward index monotonicity:
+   - `reward_index` never decreases.
+3. Reward accrual safety:
+   - rewards are accrued before any balance-changing operation so users cannot claim rewards for balances they did not hold.
+4. Lock safety:
+   - locked funds cannot be withdrawn until their lock expiry timestamp passes.
+5. Authorization:
+   - privileged operations require the admin or the relevant user to authenticate.
+6. Reentrancy safety:
+   - state mutations are guarded so nested calls cannot corrupt accounting.
+7. Minimum reward distribution:
+   - reward distributions below the minimum amount are rejected to prevent dust spam and unnecessary state churn.
+8. Initialization safety:
+   - the contract can only be initialized once and must not accept duplicate token addresses.
 
-### Lock and Unlock Flow
+## 5. State Transition Model
 
-1.  A user deposits funds, which are initially liquid.
-2.  The user calls `lock(amount, duration)` to move funds from their liquid balance to a new lock.
-3.  The lock has an `unlock_timestamp`. Before this time, the funds are inaccessible for withdrawal.
-4.  After the timestamp passes, the lock is considered "expired".
-5.  The `withdraw` function automatically processes expired locks, moving the funds back to the user's liquid balance before processing the withdrawal.
-6.  Users can also manually trigger this process by calling `unlock_expired()`.
+### 5.1 Initialization
 
-## Reward Accounting Logic
+Flow:
 
-This section documents the critical "snapshot" mechanism that prevents reward stealing attacks in the index-based reward model.
+1. The contract is initialized once with admin, deposit token, reward token, vesting period, target deposits, and utilization multipliers.
+2. The instance state is set and the pause flag is cleared.
+3. The contract emits an initialization event.
 
-### The Problem: Reward Stealing Attack
+Preconditions:
 
-In an index-based reward system, if a user's balance changes without updating their `reward_index`, they can claim rewards they didn't earn. For example:
+- the contract must not already be initialized,
+- deposit and reward tokens must be distinct,
+- utilization multiplier points must be non-decreasing.
 
-1. Global `reward_index` = 100
-2. User deposits 1000 tokens (their `reward_index` = 100)
-3. Admin distributes rewards, global `reward_index` = 200
-4. User withdraws 1000 tokens **without updating their index**
-5. User's pending rewards = 1000 × (200 - 100) / 1e18 = rewards they didn't earn
+### 5.2 Deposit flow
 
-### The Solution: Snapshot Before Balance Change
+Flow:
 
-The contract prevents this by **accruing rewards before any balance change**:
+1. The caller authenticates.
+2. The contract accrues any pending rewards for the user based on the prior balance.
+3. The deposit token is transferred into the contract.
+4. The user’s liquid balance and total deposits increase.
+5. The user’s reward snapshot is updated.
 
-#### Deposit Flow
+Important note:
 
+- reward accrual occurs before the balance mutation so the user is credited only for the balance that existed before the deposit.
+
+### 5.3 Withdraw flow
+
+Flow:
+
+1. The caller authenticates.
+2. The contract accrues any pending rewards for the user.
+3. Any expired locks are moved back into liquid balance up to a small processing limit.
+4. The contract checks that the user has sufficient liquid balance.
+5. Principal is reduced and the deposit token is transferred back to the user.
+
+Important note:
+
+- withdrawals operate against liquid balance; locked funds remain inaccessible until expiry.
+
+### 5.4 Lock flow
+
+Flow:
+
+1. The caller authenticates.
+2. Rewards are accrued before changing the balance distribution.
+3. The requested amount is moved from liquid balance into a new lock.
+4. The lock records the unlock timestamp and a placeholder multiplier value.
+
+Important note:
+
+- the lock does not change the total deposits field because the principal remains in the vault.
+
+### 5.5 Unlock-expired flow
+
+Flow:
+
+1. The caller authenticates.
+2. The contract iterates through existing locks and moves any expired ones back to liquid balance.
+3. The lock list is pruned accordingly.
+
+Important note:
+
+- processing is capped per call to avoid budget exhaustion.
+
+### 5.6 Reward distribution flow
+
+Flow:
+
+1. The admin authenticates.
+2. The contract accepts reward tokens from the admin.
+3. The contract computes the reward index increment using the current total deposits.
+4. The global reward index is advanced.
+5. The new reward index is emitted to the runtime state.
+
+The reward increment is computed as:
+
+$$
+\text{increment} = \frac{\text{effective\,reward} \times 10^9}{\text{total\_deposits}}
+$$
+
+where `effective_reward` is the distribution amount adjusted by the current utilization multiplier.
+
+### 5.7 Claim flow
+
+Flow:
+
+1. The user authenticates.
+2. The contract accrues any newly earned rewards.
+3. The vested portion is calculated based on the time elapsed since the last reward accrual.
+4. The vested amount is transferred to the user.
+5. The user’s accrued reward balance is reduced accordingly.
+
+The vesting logic is:
+
+$$
+\text{vested} = \min\left(\text{accrued\_rewards}, \left\lfloor \frac{\text{accrued\_rewards} \times \Delta t}{\text{vesting\_period}} \right\rfloor\right)
+$$
+
+when `vesting_period > 0`.
+
+## 6. Reward Accounting Semantics
+
+The reward model is index-based and lazy. The contract does not iterate over all users on every reward distribution. Instead, it updates a global reward index and lets each user realize their share when they next interact.
+
+For a user with balance $B$ and reward indices $I_u$ and $I_g$:
+
+$$
+\text{accrued} = B \times \frac{I_g - I_u}{10^9}
+$$
+
+This formula is applied before balance mutations, which prevents reward theft and ensures that rewards belong to the balance that actually earned them.
+
+### Utilization multiplier
+
+Reward distributions are optionally scaled by a utilization-based multiplier curve:
+
+$$
+\text{effective\_amount} = \text{amount} \times \frac{\text{multiplier\_bps}}{10000}
+$$
+
+If no target deposits or multipliers are configured, the default multiplier is $1.0\times$.
+
+## 7. Function Reference
+
+### `version()`
+
+Returns the contract version as a `u32`.
+
+### `initialize(...)`
+
+Initializes the contract once and stores global configuration.
+
+### `propose_new_admin(...)` / `accept_admin(...)`
+
+Implement a two-step admin handoff. The current admin proposes a new admin, and the proposed admin accepts the role.
+
+### `deposit(...)`
+
+Transfers deposit tokens into the vault and increases the user’s liquid balance.
+
+### `withdraw(...)`
+
+Transfers deposit tokens back to the user from liquid funds after processing any expired locks.
+
+### `lock(...)`
+
+Moves funds from liquid balance into a new time lock.
+
+### `unlock_expired(...)`
+
+Moves expired locks back into liquid balance.
+
+### `distribute_rewards(...)`
+
+Transfers reward tokens into the vault and advances the global reward index.
+
+### `claim_rewards(...)`
+
+Transfers the user’s vested rewards out of the vault.
+
+### `pause_contract()` / `unpause_contract()`
+
+Toggle the emergency pause flag.
+
+### `upgrade(...)`
+
+Replaces the contract’s wasm with a new implementation.
+
+### Multi-asset functions
+
+The current implementation also exposes asset-scoped variants:
+
+- `add_asset(...)`
+- `deposit_asset(...)`
+- `withdraw_asset(...)`
+- `distribute_rewards_for_asset(...)`
+- `claim_rewards_for_asset(...)`
+- `balance_of_asset(...)`
+- `total_deposits_of_asset(...)`
+- `reward_index_of_asset(...)`
+- `pending_rewards_for_asset(...)`
+- `vested_rewards_for_asset(...)`
+
+## 8. Security Assumptions and Failure Modes
+
+The protocol assumes the following security conditions:
+
+- authentication is enforced by the runtime,
+- token contracts implement standard transfer semantics,
+- the admin does not drain reward funds unexpectedly,
+- the contract is upgraded only through a controlled admin process,
+- the reentrancy guard prevents recursive contract entry.
+
+The protocol also handles common failure cases explicitly:
+
+- insufficient principal balance for withdrawals,
+- insufficient reward balance for claims,
+- invalid or duplicate token configuration,
+- reentrant calls,
+- overflow and underflow conditions,
+- invalid lock durations,
+- unsupported assets in multi-asset flows.
+
+## 9. Protocol Diagrams
+
+### Deposit and reward claim lifecycle
+
+```mermaid
+flowchart TD
+    A[Initialize] --> B[Deposit or Lock]
+    B --> C[Distribute rewards]
+    C --> D[Claim rewards]
+    C --> E[Withdraw principal]
+    D --> F[State updated]
+    E --> F
 ```
-1. User calls deposit(amount)
-2. Contract calculates pending rewards based on OLD balance
-3. Contract stores accrued rewards in user_rewards
-4. Contract updates user_reward_index to current global_reward_index
-5. Contract increases user_balance by amount
-6. Contract increases total_deposits by amount
+
+### Admin transfer and upgrade lifecycle
+
+```mermaid
+flowchart TD
+    A[Current admin] --> B[Propose new admin]
+    B --> C[New admin accepts]
+    C --> D[Admin role transferred]
+    A --> E[Pause or upgrade]
+    E --> F[Contract state updated]
 ```
 
-**Why this order matters**: The user receives rewards only for the balance they held up to this point. The new deposit doesn't retroactively earn rewards.
+## 10. Audit Checklist
 
-#### Withdraw Flow
+An audit should verify:
 
-```
-1. User calls withdraw(amount)
-2. Contract calculates pending rewards based on OLD balance
-3. Contract stores accrued rewards in user_rewards
-4. Contract updates user_reward_index to current global_reward_index
-5. Contract decreases user_balance by amount
-6. Contract decreases total_deposits by amount
-```
+- reward accrual occurs before balance changes,
+- user balances and total deposits remain consistent,
+- lock expiry handling cannot create free liquidity,
+- the admin cannot bypass authentication,
+- reward claims never exceed the contract’s available reward balance,
+- pause and upgrade paths are constrained to the admin.
 
-**Why this order matters**: The user receives rewards for their full balance up to withdrawal. After withdrawal, they can't claim rewards on the withdrawn amount.
+This specification should be read alongside [contract-storage.md](contract-storage.md) for the detailed storage layout and [../contracts/vault-contract/src/test.rs](../contracts/vault-contract/src/test.rs) for executable examples of expected behavior.
 
-#### Claim Flow
-
-```
-1. User calls claim_rewards()
-2. Contract calculates pending rewards based on CURRENT balance
-3. Contract updates user_reward_index to current global_reward_index
-4. Contract resets user_rewards to 0
-5. Contract transfers accumulated rewards to user
-```
-
-### Mathematical Verification
-
-For a user with balance B and reward indices:
-
-- `user_index` = last synced global index
-- `global_index` = current global index
-
-**Accrued rewards** = B × (global_index - user_index) / 1e18
-
-This formula is applied **before** any balance change, ensuring:
-
-- Rewards are calculated on the balance that earned them
-- The index snapshot prevents double-counting
-- Users cannot claim rewards for balances they don't hold
-
-### Code Implementation
-
-The core logic is in `storage.rs`:
-
-```rust
-fn accrue_position_rewards(
-    state: &VaultState,
-    position: &mut UserPosition,
-) -> Result<(), VaultError> {
-    if state.reward_index == position.reward_index {
-        return Ok(()); // No new rewards
-    }
-
-    if position.balance > 0 {
-        let delta = state.reward_index - position.reward_index;
-        let accrued = position.balance * delta / REWARD_INDEX_SCALE;
-
-        if accrued > 0 {
-            position.rewards += accrued;
-        }
-    }
-
-    position.reward_index = state.reward_index; // Snapshot the index
-    Ok(())
-}
-```
-
-This function is called in:
-
-- `store_deposit()` - before increasing balance
-- `store_withdraw()` - before decreasing balance
-- `store_claimable_rewards()` - before transferring rewards
-
-### Test Coverage
-
-## Security Considerations
-
-### Admin-Only Reward Distribution
-
-The `distribute_rewards` function is a critical security-sensitive operation that:
-
-1. **Requires Admin Authorization**: Only the admin address can call this function. The contract enforces `admin.require_auth()` to prevent unauthorized reward distributions.
-
-2. **Minimum Amount Enforcement**: To prevent dust spam attacks, the function enforces a minimum distribution amount of **100,000 stroops** (0.0001 XLM). Any attempt to distribute smaller amounts will be rejected with `ValidationError::InsufficientRewardAmount`.
-
-### Why Minimum Amount Matters
-
-Without a minimum amount check, a malicious actor could:
-
-- Spam small reward distributions to artificially inflate the `reward_index` calculation frequency
-- Grief the network by forcing unnecessary state updates
-- Waste gas on the Stellar network
-
-The 100,000 stroop minimum:
-
-- Prevents dust attacks while remaining accessible for legitimate admin operations
-- Aligns with Stellar's native asset precision (1 stroop = 10^-7 XLM)
-- Is small enough for testing but large enough to deter spam
-
-### Function Signature
-
-```rust
-/// Distributes rewards to all depositors by updating the global reward index.
-/// Does not immediately transfer rewards to users - they accrue lazily.
-///
-/// Security: Only admin can call this function.
-/// Minimum amount: 100,000 stroops to prevent dust spam attacks.
-pub fn distribute_rewards(e: Env, amount: i128) -> Result<i128, VaultError>
-```
-
-### Error Cases
-
-| Error                      | Condition                  |
-| -------------------------- | -------------------------- |
-| `NotInitialized`           | Vault not initialized      |
-| `InvalidAmount`            | Amount is zero or negative |
-| `InsufficientRewardAmount` | Amount < 100,000 stroops   |
-| `Unauthorized`             | Caller is not the admin    |
-
-The following tests verify this logic:
-
-- `test_rewards_are_proportional_and_claimable` - Multiple users receive proportional rewards
-- `test_reward_proportionality_with_unequal_deposits` - 1:2:3 deposit ratio yields 1:2:3 reward ratio
-- `test_multiple_reward_distributions_accumulate` - Multiple distributions compound correctly
-- `test_deposit_after_reward_distribution` - New depositors don't retroactively earn old rewards
-- `test_reward_accrual_on_deposit_withdrawal_sequence` - Complex sequences maintain invariants
-
-### Security Guarantees
-
-1. **No Reward Stealing**: Users cannot claim rewards for balances they don't hold
-2. **No Double-Counting**: Each reward is counted exactly once per user
-3. **Atomic Updates**: Balance and index are always updated together
-4. **Reentrancy Safe**: All state mutations happen within reentrancy guards
-
-## Public Functions
-
-### `version() -> u32`
-
-Returns the contract version.
-
-Why it exists:
-
-- useful for integrations, upgrades, and quick sanity checks after deployment
-
-Example:
-
-```rust
-let version = vault.version();
-assert_eq!(version, 1);
-```
-
-### `initialize(admin, deposit_token, reward_token) -> Result<(), VaultError>`
-
-Performs one-time setup for the contract.
-
-What it does:
-
-- stores the admin address
-- stores the deposit token address
-- stores the reward token address
-- resets `total_deposits` and `reward_index` to `0`
-- emits an `init` event
-
-Security:
-
-- Fails with `AlreadyInitialized` if called twice.
-- Fails with `InvalidTokenConfiguration` if `deposit_token == reward_token`.
 - Requires `admin` authorization.
   Important rules:
 - can only run once
@@ -616,7 +685,7 @@ data = deserialize_xdr(event.data) as DepositEvent
 - `InvalidTokenConfiguration`: deposit and reward token addresses must be different.
 - `InsufficientContractBalance`: the vault does not hold enough tokens to complete the transfer.
 - `MathOverflow`: arithmetic overflow or underflow was detected while updating accounting.
-  The contract can return the following errors from [errors.rs](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/contracts/vault-contract/src/errors.rs):
+  The contract can return the following errors from [errors.rs](../contracts/vault-contract/src/errors.rs):
 
 - `AlreadyInitialized`
 - `NotInitialized`
@@ -638,6 +707,6 @@ data = deserialize_xdr(event.data) as DepositEvent
 
 ## Contributor Tips
 
-- Read [contracts/vault-contract/src/lib.rs](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/contracts/vault-contract/src/lib.rs) for the public API.
-- Read [contracts/vault-contract/src/storage.rs](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/contracts/vault-contract/src/storage.rs) for accounting internals.
-- Start with the tests in [contracts/vault-contract/src/lib.rs](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/contracts/vault-contract/src/lib.rs) if you want executable examples.
+- Read [contracts/vault-contract/src/lib.rs](../contracts/vault-contract/src/lib.rs) for the public API.
+- Read [contracts/vault-contract/src/storage.rs](../contracts/vault-contract/src/storage.rs) for accounting internals.
+- Start with the tests in [contracts/vault-contract/src/test.rs](../contracts/vault-contract/src/test.rs) if you want executable examples.

@@ -22,11 +22,11 @@ The reward model is index-based, which means the contract updates a global rewar
 
 If you are onboarding as a contributor, these are the best first reads:
 
-- [docs/contract-spec.md](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/docs/contract-spec.md)
-- [docs/contract-storage.md](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/docs/contract-storage.md)
-- [contracts/vault-contract/src/lib.rs](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/contracts/vault-contract/src/lib.rs)
-- [contracts/vault-contract/src/storage.rs](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/contracts/vault-contract/src/storage.rs)
-- [ARCHITECTURE.md](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/ARCHITECTURE.md)
+- [docs/contract-spec.md](docs/contract-spec.md)
+- [docs/contract-storage.md](docs/contract-storage.md)
+- [contracts/vault-contract/src/lib.rs](contracts/vault-contract/src/lib.rs)
+- [contracts/vault-contract/src/storage.rs](contracts/vault-contract/src/storage.rs)
+- [ARCHITECTURE.md](ARCHITECTURE.md)
 
 ## Contract At A Glance
 
@@ -68,7 +68,7 @@ Per-user keys:
 - last synced reward index
 - accrued but unclaimed rewards
 
-Read the full walkthrough in [docs/contract-storage.md](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/docs/contract-storage.md).
+Read the full walkthrough in [docs/contract-storage.md](docs/contract-storage.md).
 
 ## Example Flow
 
@@ -89,12 +89,12 @@ assert_eq!(vault.claim_rewards(&bob), 300);
 
 ## Repository Layout
 
-- [contracts/vault-contract](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/contracts/vault-contract) - Soroban vault contract in Rust
-- [network-node](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/network-node) - network service and API layer
-- [docs](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/docs) - contract and architecture documentation
-- [scripts](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/scripts) - deployment and helper scripts
-- [tests](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/tests) - integration and TypeScript tests
-- [terraform](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/terraform) - infrastructure as code
+- [contracts/vault-contract](contracts/vault-contract) - Soroban vault contract in Rust
+- [network-node](network-node) - network service and API layer
+- [docs](docs) - contract and architecture documentation
+- [scripts](scripts) - deployment and helper scripts
+- [tests](tests) - integration and TypeScript tests
+- [terraform](terraform) - infrastructure as code
 
 ## Local Setup
 
@@ -143,8 +143,8 @@ npm test
 
 ## More Documentation
 
-- [docs/contract-spec.md](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/docs/contract-spec.md)
-- [docs/contract-storage.md](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/docs/contract-storage.md)
-- [docs/architecture.md](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/docs/architecture.md)
-- [ARCHITECTURE.md](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/ARCHITECTURE.md)
-- [CONTRIBUTING.md](/c:/Users/ADMIN/Desktop/remmy-drips/axionvera-network/CONTRIBUTING.md)
+- [docs/contract-spec.md](docs/contract-spec.md)
+- [docs/contract-storage.md](docs/contract-storage.md)
+- [docs/architecture.md](docs/architecture.md)
+- [ARCHITECTURE.md](ARCHITECTURE.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md)
