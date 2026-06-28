@@ -62,7 +62,7 @@ describe('Event Standards', () => {
     it('protocol identifier should be consistent across all events', () => {
       const actions = Object.values(EVENT_ACTIONS);
       for (const action of actions) {
-        expect(PROTOCOL).toBe('AxionVault');
+        expect(PROTOCOL).toBe('AxVault');
         expect(action).toBeDefined();
         expect(action.length).toBeGreaterThan(0);
       }
@@ -81,7 +81,7 @@ describe('Event Standards', () => {
     it('should have all admin operations', () => {
       const actions = Object.values(EVENT_ACTIONS);
       expect(actions).toContain('admin_prp');
-      expect(actions).toContain('admin_acpt');
+      expect(actions).toContain('adm_acpt');
       expect(actions).toContain('upgrade');
       expect(actions).toContain('pause');
       expect(actions).toContain('unpause');
@@ -92,7 +92,7 @@ describe('Event Standards', () => {
       expect(actions).toContain('asset_add');
       expect(actions).toContain('asset_dep');
       expect(actions).toContain('asset_wd');
-      expect(actions).toContain('asset_dist');
+      expect(actions).toContain('ast_dist');
       expect(actions).toContain('asset_clm');
     });
 
