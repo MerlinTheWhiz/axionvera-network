@@ -1,9 +1,9 @@
+use crate::config::DatabaseConfig;
+use crate::error::{DatabaseError, Result};
+use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, instrument};
-use sqlx::postgres::{PgPoolOptions, PgPool};
-use crate::config::DatabaseConfig;
-use crate::error::{DatabaseError, Result};
 
 /// Database connection pool manager using sqlx
 #[derive(Clone)]
@@ -30,12 +30,11 @@ impl ConnectionPool {
             .idle_timeout(config.idle_timeout)
             .connect(database_url)
             .await
-            .map_err(|e| crate::error::NetworkError::Database(DatabaseError::ConnectionFailed(e.to_string())))?;
+            .map_err(|e| {
+                crate::error::NetworkError::Database(DatabaseError::ConnectionFailed(e.to_string()))
+            })?;
 
-        let pool_manager = Self {
-            pool,
-            config,
-        };
+        let pool_manager = Self { pool, config };
 
         // Initialize schema
         pool_manager.initialize_schema().await?;
@@ -53,21 +52,25 @@ impl ConnectionPool {
                 id SERIAL PRIMARY KEY,
                 last_processed_ledger INTEGER NOT NULL DEFAULT 0,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            )"
+            )",
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::NetworkError::Database(DatabaseError::QueryFailed(e.to_string())))?;
+        .map_err(|e| {
+            crate::error::NetworkError::Database(DatabaseError::QueryFailed(e.to_string()))
+        })?;
 
         // Initialize indexer_state if empty
         sqlx::query(
             "INSERT INTO indexer_state (id, last_processed_ledger)
              SELECT 1, 0
-             WHERE NOT EXISTS (SELECT 1 FROM indexer_state WHERE id = 1)"
+             WHERE NOT EXISTS (SELECT 1 FROM indexer_state WHERE id = 1)",
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::NetworkError::Database(DatabaseError::QueryFailed(e.to_string())))?;
+        .map_err(|e| {
+            crate::error::NetworkError::Database(DatabaseError::QueryFailed(e.to_string()))
+        })?;
 
         // Create events table (standardized, query-friendly)
         sqlx::query(
@@ -86,11 +89,13 @@ impl ConnectionPool {
                 event_version INTEGER DEFAULT 1,
                 data JSONB NOT NULL,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            )"
+            )",
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::NetworkError::Database(DatabaseError::QueryFailed(e.to_string())))?;
+        .map_err(|e| {
+            crate::error::NetworkError::Database(DatabaseError::QueryFailed(e.to_string()))
+        })?;
 
         // Create indexes for query performance
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_events_ledger ON events (ledger_sequence)")
@@ -124,11 +129,13 @@ impl ConnectionPool {
                 transaction_hash TEXT,
                 ledger_sequence INTEGER,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            )"
+            )",
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::NetworkError::Database(DatabaseError::QueryFailed(e.to_string())))?;
+        .map_err(|e| {
+            crate::error::NetworkError::Database(DatabaseError::QueryFailed(e.to_string()))
+        })?;
 
         info!("Database schema initialized successfully");
         Ok(())
@@ -225,19 +232,16 @@ impl ConnectionPool {
     }
 
     /// Get all events with pagination
-    pub async fn get_all_events(
-        &self,
-        limit: i32,
-        offset: i32,
-    ) -> Result<Vec<serde_json::Value>> {
-        let rows = sqlx::query(
-            "SELECT data FROM events ORDER BY timestamp DESC LIMIT $1 OFFSET $2"
-        )
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| crate::error::NetworkError::Database(DatabaseError::QueryFailed(e.to_string())))?;
+    pub async fn get_all_events(&self, limit: i32, offset: i32) -> Result<Vec<serde_json::Value>> {
+        let rows =
+            sqlx::query("SELECT data FROM events ORDER BY timestamp DESC LIMIT $1 OFFSET $2")
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| {
+                    crate::error::NetworkError::Database(DatabaseError::QueryFailed(e.to_string()))
+                })?;
         Ok(rows.into_iter().map(|r| r.get(0)).collect())
     }
 
@@ -255,10 +259,13 @@ impl ConnectionPool {
 
     /// Get last processed ledger
     pub async fn get_last_processed_ledger(&self) -> Result<u32> {
-        let row: (i32,) = sqlx::query_as("SELECT last_processed_ledger FROM indexer_state WHERE id = 1")
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| crate::error::NetworkError::Database(DatabaseError::QueryFailed(e.to_string())))?;
+        let row: (i32,) =
+            sqlx::query_as("SELECT last_processed_ledger FROM indexer_state WHERE id = 1")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| {
+                    crate::error::NetworkError::Database(DatabaseError::QueryFailed(e.to_string()))
+                })?;
         Ok(row.0 as u32)
     }
 }

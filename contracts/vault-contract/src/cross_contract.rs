@@ -1,5 +1,5 @@
-use soroban_sdk::{Address, Env};
 use soroban_sdk::token::Client as TokenClient;
+use soroban_sdk::{Address, Env};
 
 use crate::errors::VaultError;
 

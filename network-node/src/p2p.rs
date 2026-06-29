@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn, instrument, Span};
+use tracing::{debug, info, instrument, warn, Span};
 
 pub type NodeId = [u8; 32];
 
@@ -145,7 +145,7 @@ impl P2PManager {
     #[instrument(skip(self), fields(node_id = %hex::encode(self.local_id), peer_address = %address, peer_id = %peer_id))]
     pub async fn connect_to_peer(&self, address: SocketAddr, peer_id: String) -> Result<String> {
         info!("Connecting to peer {} at {}", peer_id, address);
-        
+
         let span = tracing::info_span!(
             "peer_connection",
             peer_id = %peer_id,
@@ -153,7 +153,7 @@ impl P2PManager {
             node_id = %hex::encode(self.local_id)
         );
         let _enter = span.enter();
-        
+
         let peer_info = PeerInfo {
             id: peer_id.clone(),
             address,
@@ -165,24 +165,29 @@ impl P2PManager {
 
         let mut connected_peers = self.connected_peers.write().await;
         connected_peers.insert(peer_id.clone(), peer_info);
-        
+
         let session_id = format!("session_{}", fastrand::u64(..));
-        info!("Successfully connected to peer {}, session: {}", peer_id, session_id);
-        
+        info!(
+            "Successfully connected to peer {}, session: {}",
+            peer_id, session_id
+        );
+
         Ok(session_id)
     }
 
     /// Disconnect from a peer
     pub async fn disconnect_from_peer(&self, peer_id: &str) -> Result<()> {
         info!("Disconnecting from peer: {}", peer_id);
-        
+
         let mut connected_peers = self.connected_peers.write().await;
         if connected_peers.remove(peer_id).is_some() {
             info!("Successfully disconnected from peer: {}", peer_id);
             Ok(())
         } else {
             warn!("Peer {} was not connected", peer_id);
-            Err(crate::error::NetworkError::P2P("Peer not connected".to_string()))
+            Err(crate::error::NetworkError::P2P(
+                "Peer not connected".to_string(),
+            ))
         }
     }
 
@@ -216,9 +221,13 @@ impl P2PManager {
             node_id = %hex::encode(self.local_id)
         );
         let _enter = span.enter();
-        
-        info!("Broadcasting message type {} to {} peers", message_type, target_peers.len());
-        
+
+        info!(
+            "Broadcasting message type {} to {} peers",
+            message_type,
+            target_peers.len()
+        );
+
         let connected_peers = self.connected_peers.read().await;
         let mut recipients_count = 0;
         let mut failed_peers = Vec::new();
@@ -242,9 +251,13 @@ impl P2PManager {
 
         info!("Message broadcasted to {} recipients", recipients_count);
         if !failed_peers.is_empty() {
-            warn!("Failed to broadcast to {} peers: {:?}", failed_peers.len(), failed_peers);
+            warn!(
+                "Failed to broadcast to {} peers: {:?}",
+                failed_peers.len(),
+                failed_peers
+            );
         }
-        
+
         Ok((recipients_count, failed_peers))
     }
 }

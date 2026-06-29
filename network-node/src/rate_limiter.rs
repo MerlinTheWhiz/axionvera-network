@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tokio::sync::Mutex;
 use crate::error::{NetworkError, Result};
+use tokio::sync::Mutex;
 
 // Optional redis backend
 #[cfg(feature = "redis-backend")]
@@ -25,14 +25,19 @@ impl RateLimiter {
     pub async fn new(redis_url: Option<String>, limit_per_minute: u64) -> Self {
         if let Some(url) = redis_url {
             match redis::Client::open(url.as_str()) {
-                Ok(client) => match client.get_tokio_connection_manager().await {
-                    Ok(manager) => {
-                        return Self { backend: RateLimiterBackend::Redis(manager), limit_per_minute };
+                Ok(client) => {
+                    match client.get_tokio_connection_manager().await {
+                        Ok(manager) => {
+                            return Self {
+                                backend: RateLimiterBackend::Redis(manager),
+                                limit_per_minute,
+                            };
+                        }
+                        Err(_) => {
+                            tracing::warn!("Failed to connect to Redis, falling back to in-memory rate limiter");
+                        }
                     }
-                    Err(_) => {
-                        tracing::warn!("Failed to connect to Redis, falling back to in-memory rate limiter");
-                    }
-                },
+                }
                 Err(_) => {
                     tracing::warn!("Invalid Redis URL, falling back to in-memory rate limiter");
                 }
@@ -48,7 +53,9 @@ impl RateLimiter {
     /// Check and increment the counter for a given key (e.g., client IP). Returns true if allowed.
     pub async fn allow(&self, key: &str) -> Result<bool> {
         // Use minute-bucket (epoch minutes)
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
         let bucket = (now.as_secs() / 60) as i64;
 
         match &self.backend {
@@ -59,11 +66,19 @@ impl RateLimiter {
                 let mut conn = manager.clone();
                 let res: redis::RedisResult<u64> = async {
                     let mut c = conn;
-                    let v: u64 = redis::cmd("INCR").arg(&redis_key).query_async(&mut c).await?;
+                    let v: u64 = redis::cmd("INCR")
+                        .arg(&redis_key)
+                        .query_async(&mut c)
+                        .await?;
                     // Set expiry of 70 seconds to cover the bucket
-                    let _: () = redis::cmd("EXPIRE").arg(&redis_key).arg(70).query_async(&mut c).await?;
+                    let _: () = redis::cmd("EXPIRE")
+                        .arg(&redis_key)
+                        .arg(70)
+                        .query_async(&mut c)
+                        .await?;
                     Ok(v)
-                }.await;
+                }
+                .await;
 
                 match res {
                     Ok(count) => Ok(count <= self.limit_per_minute),

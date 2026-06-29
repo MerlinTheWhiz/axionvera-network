@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::aws_kms_signer::{KmsSigner, KmsConfig};
+    use crate::aws_kms_signer::{KmsConfig, KmsSigner};
     use crate::signing::Signer;
     use aws_sdk_kms::config::Region;
     use aws_sdk_kms::primitives::Blob;
@@ -9,12 +9,12 @@ mod tests {
     use aws_smithy_runtime::client::http::test_util::{ReplayEvent, StaticReplayClient};
     use aws_smithy_runtime_api::client::http::HttpClient;
     use ed25519_dalek::PublicKey;
-    use stellar_sdk::transaction::Transaction;
     use stellar_sdk::network::Network;
+    use stellar_sdk::transaction::Transaction;
     use stellar_sdk::XdrCodec;
 
-    use base64::Engine as _;
     use base64::engine::general_purpose::STANDARD;
+    use base64::Engine as _;
 
     fn create_mock_client(events: Vec<ReplayEvent>) -> KmsClient {
         let http_client = StaticReplayClient::new(events);
@@ -32,7 +32,7 @@ mod tests {
         let mut public_key_bytes = vec![0u8; 44];
         // SPKI header for Ed25519 (fixed 12 bytes)
         public_key_bytes[..12].copy_from_slice(&[
-            0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00
+            0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
         ]);
         // Dummy 32-byte public key
         let dummy_pub_key = [1u8; 32];
@@ -58,12 +58,16 @@ mod tests {
 
         let events = vec![
             ReplayEvent::new(
-                http::Request::builder().body(aws_smithy_types::body::SdkBody::empty()).unwrap(),
-                get_pub_key_response
+                http::Request::builder()
+                    .body(aws_smithy_types::body::SdkBody::empty())
+                    .unwrap(),
+                get_pub_key_response,
             ),
             ReplayEvent::new(
-                http::Request::builder().body(aws_smithy_types::body::SdkBody::empty()).unwrap(),
-                sign_response
+                http::Request::builder()
+                    .body(aws_smithy_types::body::SdkBody::empty())
+                    .unwrap(),
+                sign_response,
             ),
         ];
 
@@ -77,7 +81,10 @@ mod tests {
         let signer = KmsSigner::with_client(client, config);
 
         // Verify public key parsing
-        let pub_key = signer.get_public_key().await.expect("Should get public key");
+        let pub_key = signer
+            .get_public_key()
+            .await
+            .expect("Should get public key");
         assert_eq!(pub_key.as_bytes(), &dummy_pub_key);
 
         // Verify signing
@@ -86,22 +93,22 @@ mod tests {
         assert_eq!(signature, dummy_signature.to_vec());
 
         // 3. Verify signature bytes are appended correctly to a mock transaction envelope
-        // In Stellar, a DecoratedSignature consists of a hint (last 4 bytes of public key) 
+        // In Stellar, a DecoratedSignature consists of a hint (last 4 bytes of public key)
         // and the signature itself.
         let mut hint = [0u8; 4];
         hint.copy_from_slice(&dummy_pub_key[28..]);
-        
+
         let mut envelope_bytes = vec![0u8; 100]; // Mock envelope
         let signature_len = signature.len();
-        
+
         // Simulating appending a decorated signature: [hint (4)] + [sig_len (4)] + [signature (64)]
         let mut decorated_sig = Vec::new();
         decorated_sig.extend_from_slice(&hint);
         decorated_sig.extend_from_slice(&(signature_len as u32).to_be_bytes());
         decorated_sig.extend_from_slice(&signature);
-        
+
         envelope_bytes.extend_from_slice(&decorated_sig);
-        
+
         assert!(envelope_bytes.len() > 100);
         assert_eq!(&envelope_bytes[100..104], &hint);
         assert_eq!(&envelope_bytes[108..], &signature);

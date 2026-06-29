@@ -5,18 +5,21 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use tokio_rustls::rustls::{Certificate, PrivateKey, RootCertStore, ServerConfig as RustlsServerConfig, AllowAnyAuthenticatedClient};
-use tokio_rustls::TlsAcceptor;
-use std::io::Cursor;
-use rustls_pemfile::{certs, read_one, Item};
-use tokio_stream::wrappers::TcpListenerStream;
 use futures_util::StreamExt;
 use hyper::server::accept::from_stream;
+use rustls_pemfile::{certs, read_one, Item};
 use serde_json::{json, Value};
+use std::io::Cursor;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
+use tokio_rustls::rustls::{
+    AllowAnyAuthenticatedClient, Certificate, PrivateKey, RootCertStore,
+    ServerConfig as RustlsServerConfig,
+};
+use tokio_rustls::TlsAcceptor;
+use tokio_stream::wrappers::TcpListenerStream;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
 
@@ -70,7 +73,7 @@ impl EnhancedHttpServer {
             shutdown_tx: None,
         }
     }
-    
+
     /// Get a reference to the signing service
     pub fn signing_service(&self) -> &Arc<SigningService> {
         &self.signing_service
@@ -113,36 +116,40 @@ impl EnhancedHttpServer {
             )
             .route("/health/liveness", axum::routing::get(health_liveness))
             .route("/health/readiness", axum::routing::get(health_readiness))
-            .route("/stellar/account/:account_id", axum::routing::get(get_stellar_account))
-            .route("/stellar/ledger/latest", axum::routing::get(get_latest_ledger))
-            .route("/stellar/providers/status", axum::routing::get(get_horizon_providers_status))
-            .route("/stellar/providers/switch", axum::routing::post(switch_horizon_provider))
+            .route(
+                "/stellar/account/:account_id",
+                axum::routing::get(get_stellar_account),
+            )
+            .route(
+                "/stellar/ledger/latest",
+                axum::routing::get(get_latest_ledger),
+            )
+            .route(
+                "/stellar/providers/status",
+                axum::routing::get(get_horizon_providers_status),
+            )
+            .route(
+                "/stellar/providers/switch",
+                axum::routing::post(switch_horizon_provider),
+            )
             .route("/admin/memory/dump", axum::routing::post(memory_dump))
             .route("/admin/memory/stats", axum::routing::get(memory_stats))
-            .layer(
-                middleware::from_fn_with_state(
-                    error_middleware.clone(),
-                    error_handler_middleware,
-                )
-            )
-            .layer(
-                middleware::from_fn_with_state(
-                    is_accepting.clone(),
-                    connection_limiter_middleware,
-                )
-            )
-            .layer(
-                middleware::from_fn_with_state(
-                    rate_limiter.clone(),
-                    rate_limit_middleware,
-                )
-            )
-            .layer(
-                middleware::from_fn_with_state(
-                    active_connections.clone(),
-                    connection_tracker_middleware,
-                )
-            )
+            .layer(middleware::from_fn_with_state(
+                error_middleware.clone(),
+                error_handler_middleware,
+            ))
+            .layer(middleware::from_fn_with_state(
+                is_accepting.clone(),
+                connection_limiter_middleware,
+            ))
+            .layer(middleware::from_fn_with_state(
+                rate_limiter.clone(),
+                rate_limit_middleware,
+            ))
+            .layer(middleware::from_fn_with_state(
+                active_connections.clone(),
+                connection_tracker_middleware,
+            ))
             .layer(TraceLayer::new_for_http())
             .with_state(AppState {
                 connection_pool,
@@ -168,65 +175,104 @@ impl EnhancedHttpServer {
             info!("HTTP server listening on {}", addr);
 
             // If TLS certs are provided, wrap incoming connections with a TLS acceptor
-            if let (Some(cert_path), Some(key_path)) = (&self.config.tls_cert_path, &self.config.tls_key_path) {
+            if let (Some(cert_path), Some(key_path)) =
+                (&self.config.tls_cert_path, &self.config.tls_key_path)
+            {
                 // Read certs and keys
-                let cert_pem = std::fs::read(cert_path)
-                    .map_err(|e| NetworkError::Config(format!("Failed to read TLS certificate: {}", e)))?;
-                let key_pem = std::fs::read(key_path)
-                    .map_err(|e| NetworkError::Config(format!("Failed to read TLS private key: {}", e)))?;
+                let cert_pem = std::fs::read(cert_path).map_err(|e| {
+                    NetworkError::Config(format!("Failed to read TLS certificate: {}", e))
+                })?;
+                let key_pem = std::fs::read(key_path).map_err(|e| {
+                    NetworkError::Config(format!("Failed to read TLS private key: {}", e))
+                })?;
 
                 // Parse server certs
                 let mut cert_cursor = Cursor::new(&cert_pem);
-                let server_certs = certs(&mut cert_cursor)
-                    .map_err(|_| NetworkError::Config("Failed to parse server cert PEM".to_string()))?;
+                let server_certs = certs(&mut cert_cursor).map_err(|_| {
+                    NetworkError::Config("Failed to parse server cert PEM".to_string())
+                })?;
                 if server_certs.is_empty() {
-                    return Err(NetworkError::Config("No server certificates found in TLS cert file".to_string()));
+                    return Err(NetworkError::Config(
+                        "No server certificates found in TLS cert file".to_string(),
+                    ));
                 }
 
                 // Parse private key
                 let mut key_cursor = Cursor::new(&key_pem);
                 let mut keys = Vec::new();
                 loop {
-                    match read_one(&mut key_cursor).map_err(|_| NetworkError::Config("Failed to parse TLS private key PEM".to_string()))? {
-                        Some(Item::PKCS8Key(key)) => { keys.push(key); }
-                        Some(Item::RSAKey(key)) => { keys.push(key); }
+                    match read_one(&mut key_cursor).map_err(|_| {
+                        NetworkError::Config("Failed to parse TLS private key PEM".to_string())
+                    })? {
+                        Some(Item::PKCS8Key(key)) => {
+                            keys.push(key);
+                        }
+                        Some(Item::RSAKey(key)) => {
+                            keys.push(key);
+                        }
                         Some(_) => {}
                         None => break,
                     }
                 }
                 if keys.is_empty() {
-                    return Err(NetworkError::Config("No private keys found in TLS key file".to_string()));
+                    return Err(NetworkError::Config(
+                        "No private keys found in TLS key file".to_string(),
+                    ));
                 }
 
-                let der_certs = server_certs.into_iter().map(Certificate).collect::<Vec<_>>();
+                let der_certs = server_certs
+                    .into_iter()
+                    .map(Certificate)
+                    .collect::<Vec<_>>();
                 let der_key = PrivateKey(keys.remove(0));
 
                 // Build root store if client CA provided
                 let mut rustls_cfg = if let Some(client_ca_path) = &self.config.tls_client_ca_path {
-                    let ca_pem = std::fs::read(client_ca_path)
-                        .map_err(|e| NetworkError::Config(format!("Failed to read TLS client CA file: {}", e)))?;
+                    let ca_pem = std::fs::read(client_ca_path).map_err(|e| {
+                        NetworkError::Config(format!("Failed to read TLS client CA file: {}", e))
+                    })?;
 
                     let mut roots = RootCertStore::empty();
                     let mut cursor = Cursor::new(&ca_pem);
-                    let parsed = certs(&mut cursor)
-                        .map_err(|_| NetworkError::Config("Failed to parse client CA PEM".to_string()))?;
+                    let parsed = certs(&mut cursor).map_err(|_| {
+                        NetworkError::Config("Failed to parse client CA PEM".to_string())
+                    })?;
                     if parsed.is_empty() {
-                        return Err(NetworkError::Config("No CA certificates found in tls_client_ca_path".to_string()));
+                        return Err(NetworkError::Config(
+                            "No CA certificates found in tls_client_ca_path".to_string(),
+                        ));
                     }
-                    for cert in parsed { roots.add(&Certificate(cert)).map_err(|e| NetworkError::Config(format!("Failed to add CA cert to root store: {}", e)))?; }
+                    for cert in parsed {
+                        roots.add(&Certificate(cert)).map_err(|e| {
+                            NetworkError::Config(format!(
+                                "Failed to add CA cert to root store: {}",
+                                e
+                            ))
+                        })?;
+                    }
 
                     if self.config.tls_require_client_auth {
                         RustlsServerConfig::builder()
                             .with_safe_defaults()
                             .with_client_cert_verifier(AllowAnyAuthenticatedClient::new(roots))
                             .with_single_cert(der_certs.clone(), der_key.clone())
-                            .map_err(|e| NetworkError::Config(format!("Failed to create rustls server config: {}", e)))?
+                            .map_err(|e| {
+                                NetworkError::Config(format!(
+                                    "Failed to create rustls server config: {}",
+                                    e
+                                ))
+                            })?
                     } else {
                         RustlsServerConfig::builder()
                             .with_safe_defaults()
                             .with_no_client_auth()
                             .with_single_cert(der_certs.clone(), der_key.clone())
-                            .map_err(|e| NetworkError::Config(format!("Failed to create rustls server config: {}", e)))?
+                            .map_err(|e| {
+                                NetworkError::Config(format!(
+                                    "Failed to create rustls server config: {}",
+                                    e
+                                ))
+                            })?
                     }
                 } else {
                     // No client CA: one-way TLS
@@ -234,30 +280,34 @@ impl EnhancedHttpServer {
                         .with_safe_defaults()
                         .with_no_client_auth()
                         .with_single_cert(der_certs.clone(), der_key.clone())
-                        .map_err(|e| NetworkError::Config(format!("Failed to create rustls server config: {}", e)))?
+                        .map_err(|e| {
+                            NetworkError::Config(format!(
+                                "Failed to create rustls server config: {}",
+                                e
+                            ))
+                        })?
                 };
 
                 let acceptor = TlsAcceptor::from(std::sync::Arc::new(rustls_cfg));
                 let acceptor = std::sync::Arc::new(acceptor);
 
                 // Build incoming stream that performs TLS handshake per-connection.
-                let incoming = TcpListenerStream::new(listener)
-                    .filter_map(move |tcp_res| {
-                        let acceptor = acceptor.clone();
-                        async move {
-                            match tcp_res {
-                                Ok(stream) => match acceptor.accept(stream).await {
-                                    Ok(tls_stream) => Some(Ok::<_, std::io::Error>(tls_stream)),
-                                    Err(e) => {
-                                        tracing::warn!("TLS handshake failed: {}", e);
-                                        // Drop connection by returning None
-                                        None
-                                    }
-                                },
-                                Err(e) => Some(Err(e)),
-                            }
+                let incoming = TcpListenerStream::new(listener).filter_map(move |tcp_res| {
+                    let acceptor = acceptor.clone();
+                    async move {
+                        match tcp_res {
+                            Ok(stream) => match acceptor.accept(stream).await {
+                                Ok(tls_stream) => Some(Ok::<_, std::io::Error>(tls_stream)),
+                                Err(e) => {
+                                    tracing::warn!("TLS handshake failed: {}", e);
+                                    // Drop connection by returning None
+                                    None
+                                }
+                            },
+                            Err(e) => Some(Err(e)),
                         }
-                    });
+                    }
+                });
 
                 let server = hyper::Server::builder(from_stream(incoming))
                     .serve(app.into_make_service())
@@ -266,7 +316,9 @@ impl EnhancedHttpServer {
                         info!("HTTP server shutdown signal received");
                     });
 
-                return server.await.map_err(|e| NetworkError::Server(format!("HTTP server error: {}", e)));
+                return server
+                    .await
+                    .map_err(|e| NetworkError::Server(format!("HTTP server error: {}", e)));
             }
 
             // No TLS configured: plain TCP
@@ -403,7 +455,11 @@ async fn rate_limit_middleware(
 
     match rate_limiter.allow(&ip).await {
         Ok(true) => Ok(next.run(request).await),
-        Ok(false) => Ok((StatusCode::TOO_MANY_REQUESTS, Json(json!({"error":"rate limit exceeded"}))).into_response()),
+        Ok(false) => Ok((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({"error":"rate limit exceeded"})),
+        )
+            .into_response()),
         Err(e) => {
             tracing::error!("Rate limiter error: {}", e);
             Ok((StatusCode::INTERNAL_SERVER_ERROR, "rate limiter error").into_response())
@@ -640,8 +696,9 @@ async fn get_stellar_account(
             Json(json!({
                 "error": e.error_code(),
                 "message": e.to_string()
-            }))
-        ).into_response(),
+            })),
+        )
+            .into_response(),
     }
 }
 
@@ -698,9 +755,7 @@ async fn memory_stats() -> impl IntoResponse {
 }
 
 /// Handler for getting latest Stellar ledger
-async fn get_latest_ledger(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn get_latest_ledger(State(state): State<AppState>) -> impl IntoResponse {
     match state.stellar_service.get_latest_ledger().await {
         Ok(ledger) => Json(ledger).into_response(),
         Err(e) => (
@@ -708,15 +763,14 @@ async fn get_latest_ledger(
             Json(json!({
                 "error": e.error_code(),
                 "message": e.to_string()
-            }))
-        ).into_response(),
+            })),
+        )
+            .into_response(),
     }
 }
 
 /// Handler for getting Horizon providers status
-async fn get_horizon_providers_status(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn get_horizon_providers_status(State(state): State<AppState>) -> impl IntoResponse {
     match state.stellar_service.get_provider_status().await {
         Ok(providers) => Json(json!({
             "providers": providers.iter().map(|p| {
@@ -732,21 +786,21 @@ async fn get_horizon_providers_status(
             }).collect::<Vec<_>>(),
             "total_providers": providers.len(),
             "healthy_providers": providers.iter().filter(|p| p.is_healthy).count(),
-        })).into_response(),
+        }))
+        .into_response(),
         Err(e) => (
             StatusCode::from_u16(e.http_status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
             Json(json!({
                 "error": e.error_code(),
                 "message": e.to_string()
-            }))
-        ).into_response(),
+            })),
+        )
+            .into_response(),
     }
 }
 
 /// Handler for switching Horizon provider
-async fn switch_horizon_provider(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn switch_horizon_provider(State(state): State<AppState>) -> impl IntoResponse {
     match state.stellar_service.switch_provider().await {
         Ok(provider) => Json(json!({
             "message": "Successfully switched to backup provider",
@@ -755,14 +809,16 @@ async fn switch_horizon_provider(
                 "url": provider.url,
                 "priority": provider.priority,
             }
-        })).into_response(),
+        }))
+        .into_response(),
         Err(e) => (
             StatusCode::from_u16(e.http_status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
             Json(json!({
                 "error": e.error_code(),
                 "message": e.to_string()
-            }))
-        ).into_response(),
+            })),
+        )
+            .into_response(),
     }
 }
 
