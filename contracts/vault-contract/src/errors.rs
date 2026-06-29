@@ -57,6 +57,8 @@ pub enum ValidationError {
     InvalidLockConfiguration,
     /// Thrown when a penalty rate is invalid (e.g., above 100%).
     InvalidPenaltyRate,
+    /// Thrown when a fee rate is invalid (e.g., above 100%).
+    InvalidFeeRate,
     /// Thrown when utilization parameters are invalid (e.g., not sorted).
     InvalidUtilizationParameters,
 }
@@ -177,26 +179,28 @@ pub enum VaultError {
     CrossContractCallFailed = 25,
     /// Penalty rate must be a valid basis point value
     InvalidPenaltyRate = 20,
+    /// Fee rate must be a valid basis point value
+    InvalidFeeRate = 21,
     /// Contract upgrade failed
-    UpgradeFailed = 21,
+    UpgradeFailed = 22,
     /// The operation would exceed the per-transaction budget limit
-    OperationLimitExceeded = 22,
+    OperationLimitExceeded = 23,
     /// Cross-contract call failed
-    CrossContractCallFailed = 23,
+    CrossContractCallFailed = 24,
     /// Utilization parameters are invalid (e.g., not sorted)
-    InvalidUtilizationParameters = 24,
+    InvalidUtilizationParameters = 25,
     /// Delegation not found
-    DelegationNotFound = 25,
+    DelegationNotFound = 26,
     /// Delegation has expired
-    DelegationExpired = 26,
+    DelegationExpired = 27,
     /// Operator lacks required permission for this action
-    InsufficientDelegationPermissions = 27,
+    InsufficientDelegationPermissions = 28,
     /// Maximum number of delegations per user exceeded
-    MaxDelegationsExceeded = 28,
+    MaxDelegationsExceeded = 29,
     /// Cannot delegate to self
-    CannotDelegateToSelf = 29,
+    CannotDelegateToSelf = 30,
     /// Delegation expiration is in the past
-    InvalidDelegationExpiration = 30,
+    InvalidDelegationExpiration = 31,
 }
 
 impl VaultError {
@@ -289,6 +293,10 @@ impl VaultError {
                 category: ErrorCategory::Validation,
                 message: "penalty rate must be between 0 and 10000 basis points",
             },
+            Self::InvalidFeeRate => ErrorInfo {
+                category: ErrorCategory::Validation,
+                message: "fee rate must be between 0 and 10000 basis points",
+            },
             Self::UpgradeFailed => ErrorInfo {
                 category: ErrorCategory::Authorization,
                 message: "contract upgrade failed",
@@ -377,6 +385,7 @@ impl From<ValidationError> for VaultError {
             ValidationError::UnsupportedLockDuration => Self::UnsupportedLockDuration,
             ValidationError::InvalidLockConfiguration => Self::InvalidLockConfiguration,
             ValidationError::InvalidPenaltyRate => Self::InvalidPenaltyRate,
+            ValidationError::InvalidFeeRate => Self::InvalidFeeRate,
             ValidationError::InvalidUtilizationParameters => Self::InvalidUtilizationParameters,
         }
     }

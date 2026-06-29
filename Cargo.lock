@@ -891,6 +891,18 @@ dependencies = [
 name = "axionvera-events"
 version = "0.1.0"
 dependencies = [
+ "axionvera-interfaces",
+ "soroban-sdk",
+]
+
+[[package]]
+name = "axionvera-fees"
+version = "0.1.0"
+dependencies = [
+ "axionvera-accounting",
+ "axionvera-events",
+ "axionvera-interfaces",
+ "axionvera-storage",
  "soroban-sdk",
 ]
 
@@ -898,7 +910,6 @@ dependencies = [
 name = "axionvera-interfaces"
 version = "0.1.0"
 dependencies = [
- "axionvera-events",
  "soroban-sdk",
 ]
 
@@ -1045,9 +1056,11 @@ dependencies = [
  "axionvera-auth",
  "axionvera-core",
  "axionvera-events",
+ "axionvera-fees",
  "axionvera-interfaces",
  "axionvera-risk",
  "axionvera-security",
+ "axionvera-storage",
  "axionvera-vault-contract-v2",
  "proptest",
  "soroban-sdk",

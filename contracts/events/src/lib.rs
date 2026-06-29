@@ -2,6 +2,8 @@
 
 use soroban_sdk::{contracttype, symbol_short, Address, Bytes, BytesN, Env, Symbol};
 
+use axionvera_interfaces::{FeeConfig, FeeReceipt, FeeType};
+
 /// Current event schema version.
 pub const EVENT_VERSION: u32 = 1;
 
@@ -33,6 +35,83 @@ pub const ACT_REVOKE_DELEGATION: Symbol = symbol_short!("rvk_dlg");
 pub const ACT_DELEGATED_ACTION: Symbol = symbol_short!("deleg_act");
 pub const ACT_VESTING_CREATED: Symbol = symbol_short!("vest_new");
 pub const ACT_VESTING_CLAIMED: Symbol = symbol_short!("vest_clm");
+
+// ---------------------------------------------------------------------------
+// Accounting events
+// ---------------------------------------------------------------------------
+
+/// Protocol identifier used as Topic 1 for all accounting events.
+pub const ACT_ACCOUNTING: Symbol = symbol_short!("account");
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AccountingEvent {
+    pub event_version: u32,
+    pub category: Symbol,
+    pub operation: Symbol,
+    pub actor: Option<Address>,
+    pub asset: Option<Address>,
+    pub amount_in: i128,
+    pub amount_out: i128,
+    pub amount_processed: i128,
+    pub storage_reads: u32,
+    pub storage_writes: u32,
+    pub events_emitted: u32,
+    pub token_transfers: u32,
+    pub timestamp: u64,
+    pub ledger: u32,
+}
+
+// ---------------------------------------------------------------------------
+// Fee events
+// ---------------------------------------------------------------------------
+
+/// Protocol identifier used as Topic 1 for all fee events.
+pub const PROTOCOL_FEES: Symbol = symbol_short!("AxFee");
+
+pub const ACT_FEE_INIT: Symbol = symbol_short!("fee_init");
+pub const ACT_FEE_CONFIG: Symbol = symbol_short!("fee_cfg");
+pub const ACT_FEE_COLLECT: Symbol = symbol_short!("fee_coll");
+pub const ACT_FEE_ROUTE: Symbol = symbol_short!("fee_route");
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeConfigEvent {
+    pub event_version: u32,
+    pub admin: Address,
+    pub treasury: Address,
+    pub deposit_fee_bps: u32,
+    pub withdrawal_fee_bps: u32,
+    pub reward_fee_bps: u32,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeCollectedEvent {
+    pub event_version: u32,
+    pub fee_type: FeeType,
+    pub actor: Address,
+    pub treasury: Address,
+    pub asset: Option<Address>,
+    pub gross_amount: i128,
+    pub fee_bps: u32,
+    pub fee_amount: i128,
+    pub net_amount: i128,
+    pub treasury_amount: i128,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeTreasuryAllocatedEvent {
+    pub event_version: u32,
+    pub fee_type: FeeType,
+    pub treasury: Address,
+    pub amount: i128,
+    pub cumulative_amount: i128,
+    pub timestamp: u64,
+}
 
 // ---------------------------------------------------------------------------
 // Storage keys used by the indexing layer
@@ -320,6 +399,104 @@ pub struct DelegateActionEvent {
 
 pub fn ledger_timestamp(e: &Env) -> u64 {
     e.ledger().timestamp()
+}
+
+// ---------------------------------------------------------------------------
+// Accounting contract events
+// ---------------------------------------------------------------------------
+
+pub fn emit_accounting(
+    e: &Env,
+    category: Symbol,
+    operation: Symbol,
+    actor: Option<Address>,
+    asset: Option<Address>,
+    amount_in: i128,
+    amount_out: i128,
+    amount_processed: i128,
+    storage_reads: u32,
+    storage_writes: u32,
+    events_emitted: u32,
+    token_transfers: u32,
+) {
+    e.events().publish(
+        (PROTOCOL, ACT_ACCOUNTING),
+        AccountingEvent {
+            event_version: EVENT_VERSION,
+            category,
+            operation,
+            actor,
+            asset,
+            amount_in,
+            amount_out,
+            amount_processed,
+            storage_reads,
+            storage_writes,
+            events_emitted,
+            token_transfers,
+            timestamp: ledger_timestamp(e),
+            ledger: e.ledger().sequence(),
+        },
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Fee contract events
+// ---------------------------------------------------------------------------
+
+pub fn emit_fee_configured(e: &Env, admin: Address, config: &FeeConfig) {
+    let ts = ledger_timestamp(e);
+    e.events().publish(
+        (PROTOCOL_FEES, ACT_FEE_CONFIG),
+        FeeConfigEvent {
+            event_version: EVENT_VERSION,
+            admin,
+            treasury: config.treasury.clone(),
+            deposit_fee_bps: config.deposit_fee_bps,
+            withdrawal_fee_bps: config.withdrawal_fee_bps,
+            reward_fee_bps: config.reward_fee_bps,
+            timestamp: ts,
+        },
+    );
+}
+
+pub fn emit_fee_collected(e: &Env, receipt: &FeeReceipt) {
+    e.events().publish(
+        (PROTOCOL_FEES, ACT_FEE_COLLECT),
+        FeeCollectedEvent {
+            event_version: EVENT_VERSION,
+            fee_type: receipt.fee_type,
+            actor: receipt.actor.clone(),
+            treasury: receipt.treasury.clone(),
+            asset: receipt.asset.clone(),
+            gross_amount: receipt.gross_amount,
+            fee_bps: receipt.fee_bps,
+            fee_amount: receipt.fee_amount,
+            net_amount: receipt.net_amount,
+            treasury_amount: receipt.treasury_amount,
+            timestamp: receipt.timestamp,
+        },
+    );
+}
+
+pub fn emit_fee_treasury_allocated(
+    e: &Env,
+    fee_type: FeeType,
+    treasury: Address,
+    amount: i128,
+    cumulative_amount: i128,
+) {
+    e.events().publish(
+        (PROTOCOL_FEES, ACT_FEE_ROUTE),
+        FeeTreasuryAllocatedEvent {
+            event_version: EVENT_VERSION,
+            fee_type,
+            treasury,
+            amount,
+            cumulative_amount,
+            timestamp: ledger_timestamp(e),
+        },
+    );
 }
 
 // ---------------------------------------------------------------------------
