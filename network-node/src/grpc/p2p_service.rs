@@ -1,13 +1,13 @@
+use fastrand;
 use std::time::SystemTime;
 use tonic::{Request, Response, Status};
-use tracing::{info, warn, error};
-use fastrand;
+use tracing::{error, info, warn};
 
 use crate::grpc::network::{
-    p2p_service_server::P2PService,
-    PeerConnectionRequest, PeerConnectionResponse, PeerDisconnectionRequest, PeerDisconnectionResponse,
-    PeerListResponse, PeerInfo, BroadcastRequest, BroadcastResponse, SyncRequest, SyncResponse,
-    BlockData, MessageType, TransactionInfo, TransactionType, TransactionStatus,
+    p2p_service_server::P2PService, BlockData, BroadcastRequest, BroadcastResponse, MessageType,
+    PeerConnectionRequest, PeerConnectionResponse, PeerDisconnectionRequest,
+    PeerDisconnectionResponse, PeerInfo, PeerListResponse, SyncRequest, SyncResponse,
+    TransactionInfo, TransactionStatus, TransactionType,
 };
 use crate::p2p::P2PManager;
 
@@ -23,12 +23,17 @@ impl P2PServiceImpl {
 
 #[tonic::async_trait]
 impl P2PService for P2PServiceImpl {
-    async fn connect_to_peer(&self, request: Request<PeerConnectionRequest>) -> Result<Response<PeerConnectionResponse>, Status> {
+    async fn connect_to_peer(
+        &self,
+        request: Request<PeerConnectionRequest>,
+    ) -> Result<Response<PeerConnectionResponse>, Status> {
         let req = request.into_inner();
         info!("Received peer connection request to: {}", req.peer_address);
 
         // Parse peer address
-        let addr = req.peer_address.parse()
+        let addr = req
+            .peer_address
+            .parse()
             .map_err(|e| Status::invalid_argument(format!("Invalid peer address: {}", e)))?;
 
         // Connect to peer
@@ -56,7 +61,10 @@ impl P2PService for P2PServiceImpl {
         }
     }
 
-    async fn disconnect_from_peer(&self, request: Request<PeerDisconnectionRequest>) -> Result<Response<PeerDisconnectionResponse>, Status> {
+    async fn disconnect_from_peer(
+        &self,
+        request: Request<PeerDisconnectionRequest>,
+    ) -> Result<Response<PeerDisconnectionResponse>, Status> {
         let req = request.into_inner();
         info!("Received peer disconnection request for: {}", req.peer_id);
 
@@ -80,7 +88,10 @@ impl P2PService for P2PServiceImpl {
         }
     }
 
-    async fn get_peer_list(&self, _request: Request<()>) -> Result<Response<PeerListResponse>, Status> {
+    async fn get_peer_list(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<PeerListResponse>, Status> {
         info!("Received peer list request");
 
         let peers = self.p2p_manager.get_peer_list().await;
@@ -110,24 +121,27 @@ impl P2PService for P2PServiceImpl {
             peer_infos.push(peer_info);
         }
 
-        let response = PeerListResponse {
-            peers: peer_infos,
-        };
+        let response = PeerListResponse { peers: peer_infos };
 
         Ok(Response::new(response))
     }
 
-    async fn broadcast_message(&self, request: Request<BroadcastRequest>) -> Result<Response<BroadcastResponse>, Status> {
+    async fn broadcast_message(
+        &self,
+        request: Request<BroadcastRequest>,
+    ) -> Result<Response<BroadcastResponse>, Status> {
         let req = request.into_inner();
-        info!("Received broadcast request of type: {:?}", MessageType::try_from(req.message_type));
+        info!(
+            "Received broadcast request of type: {:?}",
+            MessageType::try_from(req.message_type)
+        );
 
         // Broadcast message to peers
-        match self.p2p_manager.broadcast_message(
-            req.message_type,
-            &req.payload,
-            &req.target_peers,
-            req.ttl,
-        ).await {
+        match self
+            .p2p_manager
+            .broadcast_message(req.message_type, &req.payload, &req.target_peers, req.ttl)
+            .await
+        {
             Ok((recipients_count, failed_peers)) => {
                 info!("Message broadcasted to {} recipients", recipients_count);
                 let response = BroadcastResponse {
@@ -151,9 +165,15 @@ impl P2PService for P2PServiceImpl {
         }
     }
 
-    async fn sync_chain(&self, request: Request<SyncRequest>) -> Result<Response<SyncResponse>, Status> {
+    async fn sync_chain(
+        &self,
+        request: Request<SyncRequest>,
+    ) -> Result<Response<SyncResponse>, Status> {
         let req = request.into_inner();
-        info!("Received chain sync request from block {} to {}", req.start_block, req.end_block);
+        info!(
+            "Received chain sync request from block {} to {}",
+            req.start_block, req.end_block
+        );
 
         // TODO: Implement actual chain synchronization
         let timestamp = SystemTime::now()
@@ -161,33 +181,29 @@ impl P2PService for P2PServiceImpl {
             .map_err(|e| Status::internal(format!("Timestamp error: {}", e)))?;
 
         // Mock block data
-        let blocks = vec![
-            BlockData {
-                block_number: req.start_block,
-                block_hash: format!("0x{:064x}", fastrand::u64(..)),
+        let blocks = vec![BlockData {
+            block_number: req.start_block,
+            block_hash: format!("0x{:064x}", fastrand::u64(..)),
+            timestamp: Some(prost_types::Timestamp {
+                seconds: timestamp.as_secs() as i64,
+                nanos: timestamp.subsec_nanos() as i32,
+            }),
+            transactions: vec![TransactionInfo {
+                transaction_hash: format!("0x{:064x}", fastrand::u64(..)),
+                transaction_type: TransactionType::Deposit as i32,
+                user_address: "0x1234567890123456789012345678901234567890".to_string(),
+                amount: "1000000".to_string(),
+                token_address: "0xtokenaddress".to_string(),
+                status: TransactionStatus::Confirmed as i32,
                 timestamp: Some(prost_types::Timestamp {
                     seconds: timestamp.as_secs() as i64,
                     nanos: timestamp.subsec_nanos() as i32,
                 }),
-                transactions: vec![
-                    TransactionInfo {
-                        transaction_hash: format!("0x{:064x}", fastrand::u64(..)),
-                        transaction_type: TransactionType::Deposit as i32,
-                        user_address: "0x1234567890123456789012345678901234567890".to_string(),
-                        amount: "1000000".to_string(),
-                        token_address: "0xtokenaddress".to_string(),
-                        status: TransactionStatus::Confirmed as i32,
-                        timestamp: Some(prost_types::Timestamp {
-                            seconds: timestamp.as_secs() as i64,
-                            nanos: timestamp.subsec_nanos() as i32,
-                        }),
-                        block_number: req.start_block,
-                        gas_used: 21000,
-                    },
-                ],
-                state_root: vec![0u8; 32],
-            },
-        ];
+                block_number: req.start_block,
+                gas_used: 21000,
+            }],
+            state_root: vec![0u8; 32],
+        }];
 
         let response = SyncResponse {
             success: true,

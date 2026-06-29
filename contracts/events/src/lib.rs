@@ -31,7 +31,8 @@ pub const ACT_ASSET_CLAIM: Symbol = symbol_short!("asset_clm");
 pub const ACT_DELEGATE: Symbol = symbol_short!("delegate");
 pub const ACT_REVOKE_DELEGATION: Symbol = symbol_short!("rvk_dlg");
 pub const ACT_DELEGATED_ACTION: Symbol = symbol_short!("deleg_act");
-pub const ACT_ACCOUNTING: Symbol = symbol_short!("account");
+pub const ACT_VESTING_CREATED: Symbol = symbol_short!("vest_new");
+pub const ACT_VESTING_CLAIMED: Symbol = symbol_short!("vest_clm");
 
 // ---------------------------------------------------------------------------
 // Storage keys used by the indexing layer
@@ -97,6 +98,29 @@ pub struct ClaimEvent {
     pub event_version: u32,
     pub user: Address,
     pub amount: i128,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VestingCreatedEvent {
+    pub event_version: u32,
+    pub user: Address,
+    pub asset: Option<Address>,
+    pub amount: i128,
+    pub start_timestamp: u64,
+    pub duration: u64,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VestingClaimedEvent {
+    pub event_version: u32,
+    pub user: Address,
+    pub asset: Option<Address>,
+    pub amount: i128,
+    pub remaining_unclaimed: i128,
     pub timestamp: u64,
 }
 
@@ -238,6 +262,54 @@ pub struct DelegatedActionEvent {
     pub delegator: Address,
     pub operator: Address,
     pub permission: u32,
+    pub action: Symbol,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AccountingEvent {
+    pub event_version: u32,
+    pub category: Symbol,
+    pub operation: Symbol,
+    pub actor: Option<Address>,
+    pub asset: Option<Address>,
+    pub amount_in: i128,
+    pub amount_out: i128,
+    pub amount_processed: i128,
+    pub storage_reads: u32,
+    pub storage_writes: u32,
+    pub events_emitted: u32,
+    pub token_transfers: u32,
+    pub timestamp: u64,
+    pub ledger: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DelegateAuthorizedEvent {
+    pub event_version: u32,
+    pub owner: Address,
+    pub delegate: Address,
+    pub permissions: u32,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DelegateRevokedEvent {
+    pub event_version: u32,
+    pub owner: Address,
+    pub delegate: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DelegateActionEvent {
+    pub event_version: u32,
+    pub owner: Address,
+    pub delegate: Address,
     pub action: Symbol,
     pub timestamp: u64,
 }
@@ -477,21 +549,261 @@ pub struct AssetRegistryUnpausedEvent {
     pub timestamp: u64,
 }
 
+// ---------------------------------------------------------------------------
+// Policy Engine — protocol identifier and action symbols
+// ---------------------------------------------------------------------------
+
+/// Protocol identifier used as Topic 1 for all policy engine events.
+pub const PROTOCOL_POLICY: Symbol = symbol_short!("AxPolicy");
+
+pub const ACT_POL_INIT: Symbol = symbol_short!("pol_init");
+pub const ACT_POL_ADD: Symbol = symbol_short!("pol_add");
+pub const ACT_POL_UPD: Symbol = symbol_short!("pol_upd");
+pub const ACT_POL_DEL: Symbol = symbol_short!("pol_del");
+pub const ACT_POL_EVAL: Symbol = symbol_short!("pol_eval");
+pub const ACT_POL_ADM_P: Symbol = symbol_short!("pol_adm_p");
+pub const ACT_POL_ADM_A: Symbol = symbol_short!("pol_adm_a");
+pub const ACT_POL_PAUSE: Symbol = symbol_short!("pol_pause");
+pub const ACT_POL_UNPAU: Symbol = symbol_short!("pol_unpau");
+
+// ---------------------------------------------------------------------------
+// Policy Engine event payload structs
+// ---------------------------------------------------------------------------
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AccountingEvent {
+pub struct PolicyInitializedEvent {
     pub event_version: u32,
-    pub category: Symbol,
-    pub operation: Symbol,
-    pub actor: Option<Address>,
-    pub asset: Option<Address>,
-    pub amount_in: i128,
-    pub amount_out: i128,
-    pub amount_processed: i128,
-    pub storage_reads: u32,
-    pub storage_writes: u32,
-    pub events_emitted: u32,
-    pub token_transfers: u32,
+    pub admin: Address,
     pub timestamp: u64,
-    pub ledger: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PolicyAddedEvent {
+    pub event_version: u32,
+    pub policy_id: BytesN<32>,
+    pub policy_name: Bytes,
+    pub added_by: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PolicyUpdatedEvent {
+    pub event_version: u32,
+    pub policy_id: BytesN<32>,
+    pub policy_name: Bytes,
+    pub updated_by: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PolicyDeletedEvent {
+    pub event_version: u32,
+    pub policy_id: BytesN<32>,
+    pub deleted_by: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PolicyEvaluatedEvent {
+    pub event_version: u32,
+    pub request_caller: Address,
+    pub target_contract: Address,
+    pub target_function: Symbol,
+    pub passed: bool,
+    pub failed_policy_id: Option<BytesN<32>>,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PolicyAdminTransferProposedEvent {
+    pub event_version: u32,
+    pub current_admin: Address,
+    pub pending_admin: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PolicyAdminTransferAcceptedEvent {
+    pub event_version: u32,
+    pub previous_admin: Address,
+    pub new_admin: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PolicyPausedEvent {
+    pub event_version: u32,
+    pub admin: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PolicyUnpausedEvent {
+    pub event_version: u32,
+    pub admin: Address,
+    pub timestamp: u64,
+}
+
+// ---------------------------------------------------------------------------
+// Replay Engine — protocol identifier and action symbols
+// ---------------------------------------------------------------------------
+
+/// Protocol identifier used as Topic 1 for all replay engine events.
+pub const PROTOCOL_REPLAY: Symbol = symbol_short!("AxReplay");
+
+pub const ACT_REPLAY_INIT: Symbol = symbol_short!("rep_init");
+pub const ACT_REPLAY_START: Symbol = symbol_short!("rep_start");
+pub const ACT_REPLAY_COMPLETE: Symbol = symbol_short!("rep_complete");
+
+// ---------------------------------------------------------------------------
+// Replay Engine event payload structs
+// ---------------------------------------------------------------------------
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReplayInitializedEvent {
+    pub event_version: u32,
+    pub admin: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReplayStartedEvent {
+    pub event_version: u32,
+    pub run_id: BytesN<32>,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReplayCompletedEvent {
+    pub event_version: u32,
+    pub run_id: BytesN<32>,
+    pub success: bool,
+    pub total_events: u64,
+    pub successful_events: u64,
+    pub timestamp: u64,
+}
+
+// ---------------------------------------------------------------------------
+// Scheduler Engine — protocol identifier and action symbols
+// ---------------------------------------------------------------------------
+
+/// Protocol identifier used as Topic 1 for all scheduler events.
+pub const PROTOCOL_SCHEDULER: Symbol = symbol_short!("AxSched");
+
+pub const ACT_SCHED_INIT: Symbol = symbol_short!("sched_init");
+pub const ACT_SCHED_TASK_SCHEDULED: Symbol = symbol_short!("task_sched");
+pub const ACT_SCHED_TASK_UPDATED: Symbol = symbol_short!("task_upd");
+pub const ACT_SCHED_TASK_CANCELED: Symbol = symbol_short!("task_cancel");
+pub const ACT_SCHED_TASK_EXECUTED: Symbol = symbol_short!("task_exec");
+pub const ACT_SCHED_TASK_FAILED: Symbol = symbol_short!("task_fail");
+pub const ACT_SCHED_ADMIN_P: Symbol = symbol_short!("sched_adm_p");
+pub const ACT_SCHED_ADMIN_A: Symbol = symbol_short!("sched_adm_a");
+pub const ACT_SCHED_PAUSE: Symbol = symbol_short!("sched_pause");
+pub const ACT_SCHED_UNPAUSE: Symbol = symbol_short!("sched_unpau");
+
+// ---------------------------------------------------------------------------
+// Scheduler event payload structs
+// ---------------------------------------------------------------------------
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchedulerInitializedEvent {
+    pub event_version: u32,
+    pub admin: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskScheduledEvent {
+    pub event_version: u32,
+    pub task_id: BytesN<32>,
+    pub task_name: Bytes,
+    pub priority: u32,
+    pub created_by: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskUpdatedEvent {
+    pub event_version: u32,
+    pub task_id: BytesN<32>,
+    pub task_name: Bytes,
+    pub updated_by: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskCanceledEvent {
+    pub event_version: u32,
+    pub task_id: BytesN<32>,
+    pub canceled_by: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskExecutedEvent {
+    pub event_version: u32,
+    pub task_id: BytesN<32>,
+    pub task_name: Bytes,
+    pub execution_count: u32,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskFailedEvent {
+    pub event_version: u32,
+    pub task_id: BytesN<32>,
+    pub task_name: Bytes,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchedulerAdminTransferProposedEvent {
+    pub event_version: u32,
+    pub current_admin: Address,
+    pub pending_admin: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchedulerAdminTransferAcceptedEvent {
+    pub event_version: u32,
+    pub previous_admin: Address,
+    pub new_admin: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchedulerPausedEvent {
+    pub event_version: u32,
+    pub admin: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchedulerUnpausedEvent {
+    pub event_version: u32,
+    pub admin: Address,
+    pub timestamp: u64,
 }

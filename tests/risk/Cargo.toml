@@ -1,0 +1,15 @@
+[package]
+name = "tests-risk"
+version = "0.1.0"
+edition = "2021"
+
+[dev-dependencies]
+soroban-sdk = { version = "22.0.0", features = ["testutils"] }
+axionvera-vault-contract = { path = "../../contracts/vault-contract" }
+axionvera-risk = { path = "../../contracts/risk" }
+axionvera-storage = { path = "../../contracts/storage" }
+axionvera-state = { path = "../../contracts/state" }
+axionvera-events = { path = "../../contracts/events" }
+axionvera-auth = { path = "../../contracts/auth" }
+axionvera-security = { path = "../../contracts/security" }
+axionvera-accounting = { path = "../../contracts/accounting" }

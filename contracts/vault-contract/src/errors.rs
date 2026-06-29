@@ -51,6 +51,10 @@ pub enum ValidationError {
     InsufficientRewardAmount,
     /// Thrown when a lock duration is zero.
     InvalidLockDuration,
+    /// Thrown when a requested lock duration is not configured.
+    UnsupportedLockDuration,
+    /// Thrown when the lock duration model configuration is malformed.
+    InvalidLockConfiguration,
     /// Thrown when a penalty rate is invalid (e.g., above 100%).
     InvalidPenaltyRate,
     /// Thrown when utilization parameters are invalid (e.g., not sorted).
@@ -159,6 +163,18 @@ pub enum VaultError {
     InsufficientRewardAmount = 18,
     /// Lock duration must be greater than zero
     InvalidLockDuration = 19,
+    /// Requested lock duration is not configured
+    UnsupportedLockDuration = 20,
+    /// Lock duration configuration is malformed
+    InvalidLockConfiguration = 21,
+    /// Contract upgrade failed
+    UpgradeFailed = 22,
+    /// The operation would exceed the per-transaction budget limit
+    OperationLimitExceeded = 23,
+    /// Utilization parameters are invalid (e.g., not sorted)
+    InvalidUtilizationParameters = 24,
+    /// Cross-contract call failed
+    CrossContractCallFailed = 25,
     /// Penalty rate must be a valid basis point value
     InvalidPenaltyRate = 20,
     /// Contract upgrade failed
@@ -262,6 +278,13 @@ impl VaultError {
                 category: ErrorCategory::Validation,
                 message: "lock duration must be greater than zero",
             },
+            Self::UnsupportedLockDuration => ErrorInfo {
+                category: ErrorCategory::Validation,
+                message: "requested lock duration is not configured",
+            },
+            Self::InvalidLockConfiguration => ErrorInfo {
+                category: ErrorCategory::Validation,
+                message: "lock duration models are invalid",
             Self::InvalidPenaltyRate => ErrorInfo {
                 category: ErrorCategory::Validation,
                 message: "penalty rate must be between 0 and 10000 basis points",
@@ -351,6 +374,8 @@ impl From<ValidationError> for VaultError {
             ValidationError::InvalidTokenConfiguration => Self::InvalidTokenConfiguration,
             ValidationError::InsufficientRewardAmount => Self::InsufficientRewardAmount,
             ValidationError::InvalidLockDuration => Self::InvalidLockDuration,
+            ValidationError::UnsupportedLockDuration => Self::UnsupportedLockDuration,
+            ValidationError::InvalidLockConfiguration => Self::InvalidLockConfiguration,
             ValidationError::InvalidPenaltyRate => Self::InvalidPenaltyRate,
             ValidationError::InvalidUtilizationParameters => Self::InvalidUtilizationParameters,
         }

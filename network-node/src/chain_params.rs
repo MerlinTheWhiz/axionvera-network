@@ -94,6 +94,47 @@ pub struct ScheduledUpgradeRecord {
     pub patch: NetworkParametersPatch,
 }
 
+/// Governance action payload that can be executed after a proposal is authorized.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProposalAction {
+    /// Schedule a protocol parameter patch at a future activation height.
+    ProtocolParameterUpdate {
+        patch: NetworkParametersPatch,
+        activation_epoch_height: u64,
+    },
+}
+
+/// Lifecycle status for governance proposals tracked by the registry.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProposalStatus {
+    PendingExecution,
+    Executed,
+}
+
+/// Auditable execution event emitted by proposal workflows.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalExecutionEvent {
+    pub proposal_id: String,
+    pub executor_address: String,
+    pub status: ProposalStatus,
+    pub transaction_id: String,
+    pub executed_at_height: u64,
+    pub action: ProposalAction,
+}
+
+/// Stored governance proposal with authorization context and execution status.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GovernanceProposal {
+    pub proposal_id: String,
+    pub proposer_address: String,
+    pub dao_voter_addresses: Vec<String>,
+    pub action: ProposalAction,
+    pub status: ProposalStatus,
+    pub created_at_height: u64,
+}
+
 /// Permissioned roles for protocol administration and operations.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -117,6 +158,10 @@ pub struct ChainParameterRegistry {
     activations: BTreeMap<u64, NetworkParametersPatch>,
     /// All submitted upgrades (including already activated) for history APIs.
     upgrade_history: Vec<ScheduledUpgradeRecord>,
+    /// Governance proposals awaiting or recording execution.
+    proposals: BTreeMap<String, GovernanceProposal>,
+    /// Proposal execution events for API responses and audit logs.
+    execution_events: Vec<ProposalExecutionEvent>,
     /// Role-based access control mapping.
     roles: std::collections::BTreeMap<String, Role>,
 }
@@ -148,6 +193,8 @@ impl ChainParameterRegistry {
             genesis_parameters: doc.network_parameters.clone(),
             activations: BTreeMap::new(),
             upgrade_history: Vec::new(),
+            proposals: BTreeMap::new(),
+            execution_events: Vec::new(),
             roles,
         }
     }
@@ -260,7 +307,87 @@ impl ChainParameterRegistry {
         }
     }
 
-    /// Submit a parameter upgrade: validates governance, delay, and non-empty patch; schedules activation.
+    /// Create an authorized governance proposal for a protocol parameter update.
+    pub fn propose_parameter_update(
+        &mut self,
+        patch: NetworkParametersPatch,
+        activation_epoch_height: u64,
+        proposer_address: &str,
+        dao_voter_addresses: &[String],
+    ) -> Result<String, String> {
+        self.validate_parameter_update_action(&patch, activation_epoch_height)?;
+        self.authorize_proposal(proposer_address, dao_voter_addresses)?;
+
+        let proposal_id = format!("prop-{:032x}", uuid::Uuid::new_v4().as_u128());
+        let proposal = GovernanceProposal {
+            proposal_id: proposal_id.clone(),
+            proposer_address: proposer_address.to_string(),
+            dao_voter_addresses: dao_voter_addresses.to_vec(),
+            action: ProposalAction::ProtocolParameterUpdate {
+                patch,
+                activation_epoch_height,
+            },
+            status: ProposalStatus::PendingExecution,
+            created_at_height: self.current_height,
+        };
+        self.proposals.insert(proposal_id.clone(), proposal);
+        tracing::info!(proposal_id = %proposal_id, proposer = %proposer_address, "Governance proposal created");
+        Ok(proposal_id)
+    }
+
+    /// Execute an authorized governance proposal and record its execution event.
+    pub fn execute_proposal(
+        &mut self,
+        proposal_id: &str,
+        executor_address: &str,
+    ) -> Result<String, String> {
+        self.check_execution_permission(executor_address)?;
+
+        let proposal = self
+            .proposals
+            .get(proposal_id)
+            .cloned()
+            .ok_or_else(|| format!("proposal {} not found", proposal_id))?;
+
+        if proposal.status == ProposalStatus::Executed {
+            return Err(format!("proposal {} already executed", proposal_id));
+        }
+
+        let tx_id = match &proposal.action {
+            ProposalAction::ProtocolParameterUpdate {
+                patch,
+                activation_epoch_height,
+            } => self.schedule_parameter_update(patch.clone(), *activation_epoch_height)?,
+        };
+
+        if let Some(stored) = self.proposals.get_mut(proposal_id) {
+            stored.status = ProposalStatus::Executed;
+        }
+
+        let event = ProposalExecutionEvent {
+            proposal_id: proposal_id.to_string(),
+            executor_address: executor_address.to_string(),
+            status: ProposalStatus::Executed,
+            transaction_id: tx_id.clone(),
+            executed_at_height: self.current_height,
+            action: proposal.action,
+        };
+        self.execution_events.push(event);
+        tracing::info!(proposal_id = %proposal_id, executor = %executor_address, transaction_id = %tx_id, "Governance proposal executed");
+        Ok(tx_id)
+    }
+
+    /// Retrieve a governance proposal by id.
+    pub fn proposal(&self, proposal_id: &str) -> Option<GovernanceProposal> {
+        self.proposals.get(proposal_id).cloned()
+    }
+
+    /// Return execution events emitted by proposal workflows.
+    pub fn execution_events(&self) -> Vec<ProposalExecutionEvent> {
+        self.execution_events.clone()
+    }
+
+    /// Submit a parameter upgrade through the governance proposal execution path.
     pub fn submit_parameter_upgrade(
         &mut self,
         patch: NetworkParametersPatch,
@@ -268,15 +395,23 @@ impl ChainParameterRegistry {
         proposer_address: &str,
         dao_voter_addresses: &[String],
     ) -> Result<String, String> {
-        if !patch_has_changes(&patch) {
+        let proposal_id = self.propose_parameter_update(
+            patch,
+            activation_epoch_height,
+            proposer_address,
+            dao_voter_addresses,
+        )?;
+        self.execute_proposal(&proposal_id, proposer_address)
+    }
+
+    fn validate_parameter_update_action(
+        &self,
+        patch: &NetworkParametersPatch,
+        activation_epoch_height: u64,
+    ) -> Result<(), String> {
+        if !patch_has_changes(patch) {
             return Err("parameter patch must set at least one field".to_string());
         }
-
-        // Enforce role-based permissioning for upgrades
-        self.check_role(proposer_address, Role::Operator)
-            .map_err(|e| format!("Permission denied: {}", e))?;
-
-        self.authorize_upgrade(proposer_address, dao_voter_addresses)?;
 
         let tip = self.current_height;
         let min_h = tip.saturating_add(self.min_activation_delay_blocks);
@@ -286,7 +421,15 @@ impl ChainParameterRegistry {
                 activation_epoch_height, min_h, tip, self.min_activation_delay_blocks
             ));
         }
+        Ok(())
+    }
 
+    fn schedule_parameter_update(
+        &mut self,
+        patch: NetworkParametersPatch,
+        activation_epoch_height: u64,
+    ) -> Result<String, String> {
+        self.validate_parameter_update_action(&patch, activation_epoch_height)?;
         self.activations
             .entry(activation_epoch_height)
             .and_modify(|existing| merge_patches(existing, &patch))
@@ -295,12 +438,31 @@ impl ChainParameterRegistry {
         let tx_id = format!("0x{:064x}", uuid::Uuid::new_v4().as_u128());
         self.upgrade_history.push(ScheduledUpgradeRecord {
             transaction_id: tx_id.clone(),
-            announced_at_height: tip,
+            announced_at_height: self.current_height,
             activation_epoch_height,
             patch,
         });
-
         Ok(tx_id)
+    }
+
+    fn authorize_proposal(
+        &self,
+        proposer_address: &str,
+        dao_voter_addresses: &[String],
+    ) -> Result<(), String> {
+        if matches!(self.governance, GovernanceConfig::AdminKeys { .. }) {
+            self.check_role(proposer_address, Role::Operator)
+                .map_err(|e| format!("Permission denied: {}", e))?;
+        }
+        self.authorize_upgrade(proposer_address, dao_voter_addresses)
+    }
+
+    fn check_execution_permission(&self, executor_address: &str) -> Result<(), String> {
+        if matches!(self.governance, GovernanceConfig::AdminKeys { .. }) {
+            self.check_role(executor_address, Role::Operator)
+                .map_err(|e| format!("Permission denied: {}", e))?;
+        }
+        Ok(())
     }
 
     fn authorize_upgrade(
@@ -321,8 +483,10 @@ impl ChainParameterRegistry {
                         "proposer_address is required for admin_keys governance".to_string()
                     );
                 }
-                let ok = keys.iter().any(|k| normalize_id(k) == p);
-                if !ok {
+                let has_permissioned_role =
+                    self.check_role(proposer_address, Role::Operator).is_ok();
+                let is_admin_key = keys.iter().any(|k| normalize_id(k) == p);
+                if !has_permissioned_role && !is_admin_key {
                     return Err("proposer is not an authorized admin key".to_string());
                 }
                 Ok(())
@@ -473,5 +637,60 @@ mod tests {
         r.revoke_role("Admin_ABC", "operator_1").unwrap();
         let result = r.submit_parameter_upgrade(patch, 120, "operator_1", &[]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn proposal_execution_records_event_and_updates_status() {
+        let mut r = test_registry_admin();
+        r.set_chain_tip_height(25);
+        let patch = NetworkParametersPatch {
+            max_transactions_per_block: Some(750),
+            ..Default::default()
+        };
+
+        let proposal_id = r
+            .propose_parameter_update(patch, 30, "admin_abc", &[])
+            .unwrap();
+        assert_eq!(
+            r.proposal(&proposal_id).unwrap().status,
+            ProposalStatus::PendingExecution
+        );
+
+        let tx_id = r.execute_proposal(&proposal_id, "admin_abc").unwrap();
+        assert!(tx_id.starts_with("0x"));
+        assert_eq!(
+            r.proposal(&proposal_id).unwrap().status,
+            ProposalStatus::Executed
+        );
+        assert_eq!(r.pending_upgrades().len(), 1);
+        assert_eq!(r.execution_events().len(), 1);
+        let event = r.execution_events().pop().unwrap();
+        assert_eq!(event.proposal_id, proposal_id);
+        assert_eq!(event.status, ProposalStatus::Executed);
+        assert_eq!(event.transaction_id, tx_id);
+        assert_eq!(
+            r.effective_parameters_at(30).max_transactions_per_block,
+            750
+        );
+    }
+
+    #[test]
+    fn execution_requires_permission_and_is_idempotent() {
+        let mut r = test_registry_admin();
+        r.set_chain_tip_height(10);
+        let patch = NetworkParametersPatch {
+            min_base_fee: Some(75),
+            ..Default::default()
+        };
+        let proposal_id = r
+            .propose_parameter_update(patch, 20, "admin_abc", &[])
+            .unwrap();
+
+        let denied = r.execute_proposal(&proposal_id, "random_user").unwrap_err();
+        assert!(denied.contains("Permission denied"));
+
+        r.execute_proposal(&proposal_id, "admin_abc").unwrap();
+        let duplicate = r.execute_proposal(&proposal_id, "admin_abc").unwrap_err();
+        assert!(duplicate.contains("already executed"));
     }
 }

@@ -5,9 +5,7 @@ use tonic::{Request, Response, Status};
 use tracing::{error, info};
 
 use crate::database::ConnectionPool;
-use crate::grpc::network::{
-    vault_service_server::VaultService, GetTvlRequest, GetTvlResponse,
-};
+use crate::grpc::network::{vault_service_server::VaultService, GetTvlRequest, GetTvlResponse};
 
 pub struct VaultServiceImpl {
     connection_pool: Arc<RwLock<ConnectionPool>>,
@@ -32,18 +30,16 @@ impl VaultService for VaultServiceImpl {
             connection_pool.get_pool().clone()
         };
 
-        let tvl: String = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(amount), 0)::TEXT FROM deposits",
-        )
-        .fetch_one(&pool)
-        .await
-        .map_err(|err| {
-            error!("Failed to fetch vault TVL: {}", err);
-            match err {
-                sqlx::Error::RowNotFound => Status::not_found("vault deposits not found"),
-                _ => Status::internal("failed to fetch vault TVL"),
-            }
-        })?;
+        let tvl: String = sqlx::query_scalar("SELECT COALESCE(SUM(amount), 0)::TEXT FROM deposits")
+            .fetch_one(&pool)
+            .await
+            .map_err(|err| {
+                error!("Failed to fetch vault TVL: {}", err);
+                match err {
+                    sqlx::Error::RowNotFound => Status::not_found("vault deposits not found"),
+                    _ => Status::internal("failed to fetch vault TVL"),
+                }
+            })?;
 
         Ok(Response::new(GetTvlResponse { tvl }))
     }
