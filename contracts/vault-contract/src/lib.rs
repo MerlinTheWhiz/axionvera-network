@@ -10,11 +10,12 @@ mod test;
 
 
 
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env};
 
 use axionvera_accounting as accounting;
 
 use crate::cross_contract::CrossContractClient;
+use axionvera_risk::{RiskManagement, RiskManagementClient, RiskParameters};
 use crate::errors::{
     AuthorizationError, BalanceError, DelegationError, StateError, ValidationError, VaultError,
 };
@@ -28,6 +29,68 @@ pub struct VaultContract;
 
 #[contractimpl]
 impl VaultContract {
+    pub fn initialize_risk(e: Env, admin: Address, params: RiskParameters) {
+        let admin_stored = storage::get_admin(&e).unwrap();
+        admin.require_auth();
+        if admin != admin_stored {
+            panic!("Unauthorized");
+        }
+        e.storage().instance().set(&axionvera_risk::DataKey::RiskParams, &params);
+        e.storage().instance().set(&axionvera_risk::DataKey::CurrentTotalDeposits, &0_i128);
+    }
+
+    pub fn set_risk_params(e: Env, admin: Address, params: RiskParameters) {
+        admin.require_auth();
+        let stored_admin: Address = storage::get_admin(&e).unwrap();
+        if admin != stored_admin {
+            panic!("Unauthorized");
+        }
+        e.storage().instance().set(&axionvera_risk::DataKey::RiskParams, &params);
+    }
+
+    pub fn get_risk_params(e: Env) -> RiskParameters {
+        e.storage().instance().get(&axionvera_risk::DataKey::RiskParams).unwrap()
+    }
+
+    pub fn check_deposit(e: Env, amount: i128) -> Result<(), axionvera_risk::RiskError> {
+        let params: RiskParameters = e.storage().instance().get(&axionvera_risk::DataKey::RiskParams).unwrap_or(RiskParameters {
+            max_deposit_amount: 0,
+            min_deposit_amount: 0,
+            max_withdrawal_amount: 0,
+            global_cap: 0,
+        });
+        let current_total: i128 = e.storage().instance().get(&axionvera_risk::DataKey::CurrentTotalDeposits).unwrap_or(0);
+
+        if amount < params.min_deposit_amount {
+            return Err(axionvera_risk::RiskError::TooSmall);
+        }
+        if amount > params.max_deposit_amount && params.max_deposit_amount > 0 {
+            return Err(axionvera_risk::RiskError::TooLarge);
+        }
+        if current_total + amount > params.global_cap && params.global_cap > 0 {
+            return Err(axionvera_risk::RiskError::CapReached);
+        }
+        Ok(())
+    }
+
+    pub fn check_withdrawal(e: Env, amount: i128) -> Result<(), axionvera_risk::RiskError> {
+        let params: RiskParameters = e.storage().instance().get(&axionvera_risk::DataKey::RiskParams).unwrap_or(RiskParameters {
+            max_deposit_amount: 0,
+            min_deposit_amount: 0,
+            max_withdrawal_amount: 0,
+            global_cap: 0,
+        });
+        if amount > params.max_withdrawal_amount && params.max_withdrawal_amount > 0 {
+            return Err(axionvera_risk::RiskError::TooLarge);
+        }
+        Ok(())
+    }
+
+    pub fn update_total_deposits(e: Env, delta: i128) {
+        let current_total: i128 = e.storage().instance().get(&axionvera_risk::DataKey::CurrentTotalDeposits).unwrap_or(0);
+        e.storage().instance().set(&axionvera_risk::DataKey::CurrentTotalDeposits, &(current_total + delta));
+    }
+
     pub fn version() -> u32 {
         1
     }
@@ -130,6 +193,8 @@ impl VaultContract {
         validate_positive_amount(amount)?;
         access::require_actor(&from)?;
 
+        Self::check_deposit(e.clone(), amount).map_err(|_| VaultError::OperationLimitExceeded)?;
+
         with_non_reentrant(&e, || {
             let deposit_token = storage::get_deposit_token(&e)?;
             CrossContractClient::token_transfer(
@@ -140,7 +205,8 @@ impl VaultContract {
                 amount,
             )?;
 
-            let (_state, _position) = storage::store_deposit(&e, &from, amount)?;
+            let (state, _position) = storage::store_deposit(&e, &from, amount)?;
+            Self::update_total_deposits(e.clone(), amount);
             account_operation(
                 &e,
                 accounting::AccountingCategory::Vault,
@@ -186,6 +252,8 @@ impl VaultContract {
 
         storage::require_delegate_permission(&e, &owner, &delegate, DELEGATE_PERM_DEPOSIT)?;
 
+        Self::check_deposit(e.clone(), amount).map_err(|_| VaultError::OperationLimitExceeded)?;
+
         with_non_reentrant(&e, || {
             let state = storage::get_state(&e)?;
             CrossContractClient::token_transfer(
@@ -197,6 +265,7 @@ impl VaultContract {
             )?;
 
             let (_state, _position) = storage::store_deposit(&e, &owner, amount)?;
+            Self::update_total_deposits(e.clone(), amount);
             events::emit_deposit(&e, owner.clone(), amount);
             events::emit_delegate_action(&e, owner.clone(), delegate.clone(), symbol_short!("deposit"));
             Ok(())
@@ -208,6 +277,8 @@ impl VaultContract {
         storage::require_initialized(&e)?;
         validate_positive_amount(amount)?;
         access::require_actor(&to)?;
+
+        Self::check_withdrawal(e.clone(), amount).map_err(|_| VaultError::OperationLimitExceeded)?;
 
         with_non_reentrant(&e, || {
             let (state, position) = storage::store_withdraw(&e, &to, amount)?;
@@ -223,11 +294,12 @@ impl VaultContract {
                 amount,
                 accounting::OperationResources::new(6, 5, 2, 1),
             )?;
+            Self::update_total_deposits(e.clone(), -amount);
             events::emit_withdraw(&e, to.clone(), amount, position.balance);
 
             CrossContractClient::token_transfer(
                 &e,
-                &deposit_token,
+                &state.deposit_token,
                 &e.current_contract_address(),
                 &to,
                 amount,
@@ -251,9 +323,12 @@ impl VaultContract {
 
         storage::require_delegate_permission(&e, &owner, &delegate, DELEGATE_PERM_WITHDRAW)?;
 
+        Self::check_withdrawal(e.clone(), amount).map_err(|_| VaultError::OperationLimitExceeded)?;
+
         with_non_reentrant(&e, || {
             let state = storage::get_state(&e)?;
             let (state, position) = storage::store_withdraw(&e, &owner, amount)?;
+            Self::update_total_deposits(e.clone(), -amount);
 
             events::emit_withdraw(&e, owner.clone(), amount, position.balance);
             events::emit_delegate_action(&e, owner.clone(), delegate.clone(), symbol_short!("withdraw"));
@@ -592,6 +667,8 @@ impl VaultContract {
         validate_positive_amount(amount)?;
         access::require_actor(&to)?;
 
+        Self::check_withdrawal(e.clone(), amount).map_err(|_| VaultError::OperationLimitExceeded)?;
+
         with_non_reentrant(&e, || {
             let (state, position, net_amount, penalty) =
                 storage::store_early_withdraw_locked(&e, &to, amount)?;
@@ -620,6 +697,7 @@ impl VaultContract {
                 )?;
             }
             events::emit_withdraw(&e, to.clone(), net_amount, position.balance);
+            Self::update_total_deposits(e.clone(), -amount);
             CrossContractClient::token_transfer(
                 &e,
                 &state.deposit_token,
@@ -694,6 +772,8 @@ impl VaultContract {
             return Err(ValidationError::InvalidAddress.into());
         }
 
+        Self::check_deposit(e.clone(), amount).map_err(|_| VaultError::OperationLimitExceeded)?;
+
         with_non_reentrant(&e, || {
             CrossContractClient::token_transfer(
                 &e,
@@ -734,6 +814,8 @@ impl VaultContract {
         if !storage::is_asset_supported(&e, &asset) {
             return Err(ValidationError::InvalidAddress.into());
         }
+
+        Self::check_withdrawal(e.clone(), amount).map_err(|_| VaultError::OperationLimitExceeded)?;
 
         with_non_reentrant(&e, || {
             let position = storage::store_asset_withdraw(&e, &to, &asset, amount)?;

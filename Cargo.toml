@@ -9,8 +9,10 @@ members = [
   "contracts/core",
   "contracts/interfaces",
   "contracts/orchestrator",
+  "contracts/risk",
   "network-node",
   "tests/security",
+  "tests/risk",
 ]
 
 

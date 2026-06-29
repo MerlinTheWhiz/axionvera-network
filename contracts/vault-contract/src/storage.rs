@@ -101,6 +101,12 @@ pub enum DataKey {
     DelegationOperators(Address),
     /// Maximum number of delegations allowed per user
     MaxDelegationsPerUser,
+    /// Liquid balance of a user
+    UserLiquidBalance(Address),
+    /// Locks for a user
+    UserLocks(Address),
+    /// Delegate permissions for an owner and delegate
+    DelegatePermissions(Address, Address),
 }
 
 /// The global state of the vault contract.
@@ -818,6 +824,16 @@ pub fn get_liquid_balance_unchecked(e: &Env, user: &Address) -> i128 {
         bump_persistent_ttl(e, &key);
     }
     balance
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DelegateAuthorization {
+    pub owner: Address,
+    pub delegate: Address,
+    pub permissions: u32,
+    pub created_at: u64,
+    pub active: bool,
 }
 
 fn set_liquid_balance(e: &Env, user: &Address, amount: i128) {

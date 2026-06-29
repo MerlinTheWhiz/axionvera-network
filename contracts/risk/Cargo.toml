@@ -1,14 +1,15 @@
 [package]
-name = "axionvera-storage"
+name = "axionvera-risk"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 publish = false
 
 [lib]
-crate-type = ["lib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 soroban-sdk = "22.0.0"
 axionvera-events = { path = "../events" }
-axionvera-state = { path = "../state" }
+axionvera-auth = { path = "../auth" }
+axionvera-security = { path = "../security" }

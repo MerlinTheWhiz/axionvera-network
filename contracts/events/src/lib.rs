@@ -31,6 +31,9 @@ pub const ACT_ASSET_CLAIM: Symbol = symbol_short!("asset_clm");
 pub const ACT_DELEGATE: Symbol = symbol_short!("delegate");
 pub const ACT_REVOKE_DELEGATION: Symbol = symbol_short!("rvk_dlg");
 pub const ACT_DELEGATED_ACTION: Symbol = symbol_short!("deleg_act");
+pub const ACT_ACCOUNTING: Symbol = symbol_short!("account");
+pub const ACT_DELEGATE_AUTH: Symbol = symbol_short!("dlg_auth");
+pub const ACT_DELEGATE_REVOKE: Symbol = symbol_short!("dlg_rvk");
 
 // ---------------------------------------------------------------------------
 // Storage keys used by the indexing layer
@@ -237,6 +240,54 @@ pub struct DelegatedActionEvent {
     pub delegator: Address,
     pub operator: Address,
     pub permission: u32,
+    pub action: Symbol,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AccountingEvent {
+    pub event_version: u32,
+    pub category: Symbol,
+    pub operation: Symbol,
+    pub actor: Option<Address>,
+    pub asset: Option<Address>,
+    pub amount_in: i128,
+    pub amount_out: i128,
+    pub amount_processed: i128,
+    pub storage_reads: u32,
+    pub storage_writes: u32,
+    pub events_emitted: u32,
+    pub token_transfers: u32,
+    pub timestamp: u64,
+    pub ledger: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DelegateAuthorizedEvent {
+    pub event_version: u32,
+    pub owner: Address,
+    pub delegate: Address,
+    pub permissions: u32,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DelegateRevokedEvent {
+    pub event_version: u32,
+    pub owner: Address,
+    pub delegate: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DelegateActionEvent {
+    pub event_version: u32,
+    pub owner: Address,
+    pub delegate: Address,
     pub action: Symbol,
     pub timestamp: u64,
 }

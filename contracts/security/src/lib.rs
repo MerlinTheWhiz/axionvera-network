@@ -1,49 +1,104 @@
-﻿#![no_std]
+#![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, symbol_short};
+use soroban_sdk::{Address, Env};
+use axionvera_auth::{AccessPolicy, PolicyViolation};
 
-#[contracttype]
-#[derive(Clone)]
-enum DataKey {
-    Admin,
-    Paused,
+pub struct Authenticated<Context> {
+    get_address: fn(&Context) -> Address,
 }
 
-const INSTANCE_TTL: u32 = 518400;
-
-#[contract]
-pub struct EmergencyPause;
-
-#[contractimpl]
-impl EmergencyPause {
-    pub fn init(e: Env, admin: Address) {
-        if e.storage().instance().has(&DataKey::Admin) { panic!("Already initialized"); }
-        e.storage().instance().set(&DataKey::Admin, &admin);
-        e.storage().instance().set(&DataKey::Paused, &false);
-        e.storage().instance().extend_ttl(INSTANCE_TTL, INSTANCE_TTL);
+impl<Context> Authenticated<Context> {
+    pub fn new(get_address: fn(&Context) -> Address) -> Self {
+        Self { get_address }
     }
+}
 
-    pub fn pause(e: Env, caller: Address) {
-        caller.require_auth();
-        let admin: Address = e.storage().instance().get(&DataKey::Admin).unwrap();
-        if caller != admin { panic!("Not authorized"); }
-        e.storage().instance().set(&DataKey::Paused, &true);
-        e.events().publish((symbol_short!("pause"),), symbol_short!("paused"));
+impl<Context> AccessPolicy<Context> for Authenticated<Context> {
+    fn enforce(&self, context: &Context) -> Result<(), PolicyViolation> {
+        let address = (self.get_address)(context);
+        address.require_auth();
+        Ok(())
     }
+}
 
-    pub fn unpause(e: Env, caller: Address) {
-        caller.require_auth();
-        let admin: Address = e.storage().instance().get(&DataKey::Admin).unwrap();
-        if caller != admin { panic!("Not authorized"); }
-        e.storage().instance().set(&DataKey::Paused, &false);
-        e.events().publish((symbol_short!("pause"),), symbol_short!("unpaused"));
-    }
+pub struct MatchAddress<Context> {
+    get_caller: fn(&Context) -> Address,
+    get_expected: fn(&Context) -> Address,
+    violation: PolicyViolation,
+}
 
-    pub fn is_paused(e: Env) -> bool {
-        e.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+impl<Context> MatchAddress<Context> {
+    pub fn new(
+        get_caller: fn(&Context) -> Address,
+        get_expected: fn(&Context) -> Address,
+        violation: PolicyViolation,
+    ) -> Self {
+        Self {
+            get_caller,
+            get_expected,
+            violation,
+        }
     }
+}
 
-    pub fn admin(e: Env) -> Address {
-        e.storage().instance().get(&DataKey::Admin).unwrap()
+impl<Context> AccessPolicy<Context> for MatchAddress<Context> {
+    fn enforce(&self, context: &Context) -> Result<(), PolicyViolation> {
+        let caller = (self.get_caller)(context);
+        let expected = (self.get_expected)(context);
+        if caller == expected {
+            Ok(())
+        } else {
+            Err(self.violation)
+        }
     }
+}
+
+pub struct PredicatePolicy<Context> {
+    predicate: fn(&Context) -> bool,
+    violation: PolicyViolation,
+}
+
+impl<Context> PredicatePolicy<Context> {
+    pub fn new(predicate: fn(&Context) -> bool, violation: PolicyViolation) -> Self {
+        Self {
+            predicate,
+            violation,
+        }
+    }
+}
+
+impl<Context> AccessPolicy<Context> for PredicatePolicy<Context> {
+    fn enforce(&self, context: &Context) -> Result<(), PolicyViolation> {
+        if (self.predicate)(context) {
+            Ok(())
+        } else {
+            Err(self.violation)
+        }
+    }
+}
+
+pub fn require_actor(address: &Address) {
+    address.require_auth();
+}
+
+pub fn require_stored_admin(admin: &Address) {
+    admin.require_auth();
+}
+
+pub fn require_pending_admin(new_admin: &Address, pending_admin: Option<Address>) -> Result<(), ()> {
+    new_admin.require_auth();
+    if let Some(pending) = pending_admin {
+        if new_admin == &pending {
+            return Ok(());
+        }
+    }
+    Err(())
+}
+
+pub fn require_admin(caller: &Address, admin: &Address) -> Result<(), ()> {
+    caller.require_auth();
+    if caller == admin {
+        return Ok(());
+    }
+    Err(())
 }

@@ -16,6 +16,7 @@ axionvera-accounting = { path = "../accounting" }
 axionvera-core = { path = "../core" }
 axionvera-interfaces = { path = "../interfaces" }
 axionvera-security = { path = "../security" }
+axionvera-risk = { path = "../risk" }
 
 [dev-dependencies]
 proptest = "1.6.0"

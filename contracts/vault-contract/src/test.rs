@@ -1189,7 +1189,7 @@ fn test_delegated_withdraw() {
     client.initialize(&admin, &deposit_token, &reward_token, &0u64, &0, &soroban_sdk::Vec::new(&e));
 
     // Grant WITHDRAW permission
-    client.delegate(&vault_owner, &operator, &storage::PERMISSION_DEPOSIT | storage::PERMISSION_WITHDRAW, &0u64);
+    client.delegate(&vault_owner, &operator, storage::PERMISSION_DEPOSIT | storage::PERMISSION_WITHDRAW, 0u64);
 
     // Set up mock token balances
     e.as_contract(&deposit_token, || {
@@ -1242,7 +1242,7 @@ fn test_delegated_claim_rewards() {
     client.initialize(&admin, &deposit_token, &reward_token, &0u64, &0, &soroban_sdk::Vec::new(&e));
 
     // Grant CLAIM permission
-    client.delegate(&vault_owner, &operator, &storage::PERMISSION_CLAIM | storage::PERMISSION_DEPOSIT, &0u64);
+    client.delegate(&vault_owner, &operator, storage::PERMISSION_CLAIM | storage::PERMISSION_DEPOSIT, 0u64);
 
     // Set up mock token balances
     e.as_contract(&deposit_token, || {
@@ -1340,10 +1340,10 @@ fn test_delegation_events() {
 
     let events = e.events().all();
     let delegate_event = events.get(events.len() - 1).unwrap();
-    assert_eq!(delegate_event.0.len(), 2, "Delegate must have 2 topics");
+    assert_eq!(delegate_event.1.len(), 2, "Delegate must have 2 topics");
     assert_eq!(
-        delegate_event.0.get(1).unwrap(),
-        soroban_sdk::xdr::ToXdr::to_xdr(&axionvera_events::ACT_DELEGATE, &e),
+        delegate_event.1.get(1).unwrap(),
+        axionvera_events::ACT_DELEGATE.into_val(&e),
     );
 
     // Revoke and check event
@@ -1351,8 +1351,8 @@ fn test_delegation_events() {
     let events = e.events().all();
     let revoke_event = events.get(events.len() - 1).unwrap();
     assert_eq!(
-        revoke_event.0.get(1).unwrap(),
-        soroban_sdk::xdr::ToXdr::to_xdr(&axionvera_events::ACT_REVOKE_DELEGATION, &e),
+        revoke_event.1.get(1).unwrap(),
+        axionvera_events::ACT_REVOKE_DELEGATION.into_val(&e),
     );
 }
 
