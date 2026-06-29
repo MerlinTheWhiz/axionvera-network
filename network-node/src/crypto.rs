@@ -78,7 +78,7 @@ impl CryptoWorkerPool {
     ) -> (Self, mpsc::UnboundedReceiver<BatchVerificationResult>) {
         let (work_sender, work_receiver) = mpsc::unbounded_channel();
         let (result_sender, result_receiver) = mpsc::unbounded_channel();
-        
+
         let pending_requests = Arc::new(RwLock::new(HashMap::new()));
         let semaphore = Arc::new(Semaphore::new(worker_count));
 
@@ -92,9 +92,10 @@ impl CryptoWorkerPool {
             let semaphore = semaphore.clone();
 
             let worker = tokio::spawn(async move {
-                Self::worker_loop(i, work_receiver, result_sender, pending_requests, semaphore).await;
+                Self::worker_loop(i, work_receiver, result_sender, pending_requests, semaphore)
+                    .await;
             });
-            
+
             workers.push(worker);
         }
 
@@ -113,7 +114,8 @@ impl CryptoWorkerPool {
                     pending_requests,
                     batch_size,
                     batch_timeout_ms,
-                ).await;
+                )
+                .await;
             }
         });
 
@@ -134,7 +136,10 @@ impl CryptoWorkerPool {
     }
 
     /// Worker thread loop for processing individual signature verifications
-    #[instrument(skip(work_receiver, result_sender, pending_requests, semaphore), fields(worker_id))]
+    #[instrument(
+        skip(work_receiver, result_sender, pending_requests, semaphore),
+        fields(worker_id)
+    )]
     async fn worker_loop(
         worker_id: usize,
         mut work_receiver: mpsc::UnboundedReceiver<SignatureVerificationRequest>,
@@ -143,12 +148,12 @@ impl CryptoWorkerPool {
         semaphore: Arc<Semaphore>,
     ) {
         tracing::Span::current().record("worker_id", worker_id);
-        
+
         info!("Crypto worker {} started", worker_id);
 
         while let Some(request) = work_receiver.recv().await {
             let _permit = semaphore.acquire().await.unwrap();
-            
+
             let span = tracing::info_span!(
                 "signature_verification",
                 worker_id = worker_id,
@@ -157,7 +162,10 @@ impl CryptoWorkerPool {
             );
             let _enter = span.enter();
 
-            debug!("Worker {} processing signature verification request: {}", worker_id, request.id);
+            debug!(
+                "Worker {} processing signature verification request: {}",
+                worker_id, request.id
+            );
 
             let start_time = std::time::Instant::now();
             let result = Self::verify_signature(&request).await;
@@ -178,21 +186,30 @@ impl CryptoWorkerPool {
                     // In a real implementation, we would handle the result differently
                     // For now, we just log it
                     if verification_result.is_valid {
-                        debug!("Signature verification successful for request: {}", request.id);
+                        debug!(
+                            "Signature verification successful for request: {}",
+                            request.id
+                        );
                     } else {
                         warn!("Signature verification failed for request: {}", request.id);
                     }
                 }
             }
 
-            debug!("Worker {} completed verification in {}ms", worker_id, verification_time);
+            debug!(
+                "Worker {} completed verification in {}ms",
+                worker_id, verification_time
+            );
         }
 
         info!("Crypto worker {} stopped", worker_id);
     }
 
     /// Batch processor loop for aggregating verification requests
-    #[instrument(skip(work_receiver, result_sender, pending_requests), fields(batch_size, batch_timeout_ms))]
+    #[instrument(
+        skip(work_receiver, result_sender, pending_requests),
+        fields(batch_size, batch_timeout_ms)
+    )]
     async fn batch_processor_loop(
         mut work_receiver: mpsc::UnboundedReceiver<SignatureVerificationRequest>,
         result_sender: mpsc::UnboundedSender<BatchVerificationResult>,
@@ -203,18 +220,21 @@ impl CryptoWorkerPool {
         tracing::Span::current().record("batch_size", batch_size);
         tracing::Span::current().record("batch_timeout_ms", batch_timeout_ms);
 
-        info!("Batch processor started with batch size: {}, timeout: {}ms", batch_size, batch_timeout_ms);
+        info!(
+            "Batch processor started with batch size: {}, timeout: {}ms",
+            batch_size, batch_timeout_ms
+        );
 
         let mut batch = Vec::new();
         let mut last_batch_time = std::time::Instant::now();
 
         loop {
             let timeout_duration = std::time::Duration::from_millis(batch_timeout_ms);
-            
+
             tokio::select! {
                 Some(request) = work_receiver.recv() => {
                     batch.push(request);
-                    
+
                     if batch.len() >= batch_size {
                         Self::process_batch(&batch, &result_sender).await;
                         batch.clear();
@@ -243,7 +263,11 @@ impl CryptoWorkerPool {
         tracing::Span::current().record("batch_id", &batch_id);
 
         let start_time = std::time::Instant::now();
-        info!("Processing batch {} with {} requests", batch_id, batch.len());
+        info!(
+            "Processing batch {} with {} requests",
+            batch_id,
+            batch.len()
+        );
 
         let mut results = Vec::new();
         let mut valid_count = 0;
@@ -317,7 +341,10 @@ impl CryptoWorkerPool {
             .verify(&request.message, &signature)
             .map_err(|e| NetworkError::Crypto(format!("Signature verification failed: {}", e)))?;
 
-        debug!("Signature verification successful for request: {}", request.id);
+        debug!(
+            "Signature verification successful for request: {}",
+            request.id
+        );
         Ok(())
     }
 
@@ -330,11 +357,15 @@ impl CryptoWorkerPool {
         let batch_id = Uuid::new_v4().to_string();
         tracing::Span::current().record("batch_id", &batch_id);
 
-        info!("Submitting batch {} with {} signature verification requests", batch_id, requests.len());
+        info!(
+            "Submitting batch {} with {} signature verification requests",
+            batch_id,
+            requests.len()
+        );
 
         for request in requests {
             let request_id = request.id.clone();
-            
+
             // Store request in pending map
             {
                 let mut pending = self.pending_requests.write().await;
@@ -344,14 +375,17 @@ impl CryptoWorkerPool {
             // Send to worker pool
             if let Err(e) = self.work_sender.send(request) {
                 error!("Failed to send verification request to worker pool: {}", e);
-                
+
                 // Remove from pending map
                 {
                     let mut pending = self.pending_requests.write().await;
                     pending.remove(&request_id);
                 }
-                
-                return Err(NetworkError::Crypto(format!("Failed to queue verification request: {}", e)));
+
+                return Err(NetworkError::Crypto(format!(
+                    "Failed to queue verification request: {}",
+                    e
+                )));
             }
         }
 
@@ -400,8 +434,9 @@ pub struct SignatureVerificationService {
 impl SignatureVerificationService {
     /// Create a new signature verification service
     pub fn new(worker_count: usize, batch_size: usize, batch_timeout_ms: u64) -> Self {
-        let (worker_pool, result_receiver) = CryptoWorkerPool::new(worker_count, batch_size, batch_timeout_ms);
-        
+        let (worker_pool, result_receiver) =
+            CryptoWorkerPool::new(worker_count, batch_size, batch_timeout_ms);
+
         Self {
             worker_pool,
             result_receiver,
@@ -410,8 +445,14 @@ impl SignatureVerificationService {
 
     /// Verify a batch of signatures
     #[instrument(skip(self, requests), fields(batch_size = requests.len()))]
-    pub async fn verify_batch(&mut self, requests: Vec<SignatureVerificationRequest>) -> Result<BatchVerificationResult> {
-        info!("Starting batch verification of {} signatures", requests.len());
+    pub async fn verify_batch(
+        &mut self,
+        requests: Vec<SignatureVerificationRequest>,
+    ) -> Result<BatchVerificationResult> {
+        info!(
+            "Starting batch verification of {} signatures",
+            requests.len()
+        );
 
         // Submit batch to worker pool
         self.worker_pool.verify_signature_batch(requests).await?;
@@ -419,12 +460,17 @@ impl SignatureVerificationService {
         // Wait for result
         match self.result_receiver.recv().await {
             Some(result) => {
-                info!("Batch verification completed: {}/{} valid", result.valid_signatures, result.total_requests);
+                info!(
+                    "Batch verification completed: {}/{} valid",
+                    result.valid_signatures, result.total_requests
+                );
                 Ok(result)
             }
             None => {
                 error!("Failed to receive batch verification result");
-                Err(NetworkError::Crypto("Failed to receive verification result".to_string()))
+                Err(NetworkError::Crypto(
+                    "Failed to receive verification result".to_string(),
+                ))
             }
         }
     }
@@ -437,7 +483,7 @@ impl SignatureVerificationService {
     /// Start background result processor
     pub async fn start_result_processor(&mut self) -> Result<tokio::task::JoinHandle<()>> {
         let mut result_receiver = self.result_receiver.clone();
-        
+
         let handle = tokio::spawn(async move {
             while let Some(batch_result) = result_receiver.recv().await {
                 info!(
@@ -447,7 +493,7 @@ impl SignatureVerificationService {
                     batch_result.total_requests,
                     batch_result.total_time_ms
                 );
-                
+
                 // In a real implementation, you might want to:
                 // 1. Store results in a database
                 // 2. Update metrics

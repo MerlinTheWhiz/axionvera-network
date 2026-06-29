@@ -1,9 +1,9 @@
+use fastrand;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
 use tracing::info;
-use fastrand;
 
 use crate::chain_params::{
     ChainParameterRegistry, NetworkParameters as CoreNetworkParameters,
@@ -12,15 +12,14 @@ use crate::chain_params::{
 use crate::database::ConnectionPool;
 use crate::error::NetworkError;
 use crate::grpc::network::{
-    network_service_server::NetworkService,
-    ChainParametersView, DepositRequest, WithdrawRequest, DistributeRewardsRequest,
-    ClaimRewardsRequest, TransactionResponse, BalanceRequest, BalanceResponse, RewardsRequest,
-    RewardsResponse, ContractStateRequest, ContractStateResponse, NetworkStatusResponse,
-    NodeInfoRequest, NodeInfoResponse, NetworkParameters as ProtoNetworkParameters,
-    NetworkParametersPatch as ProtoPatch, ParameterUpgradeRequest, PendingParameterUpgrade,
-    PendingParameterUpgradesResponse, TransactionRequest, TransactionHistoryRequest,
-    TransactionHistoryResponse, TransactionInfo, TransactionType, TransactionStatus,
-    TVLRequest, TVLResponse,
+    network_service_server::NetworkService, BalanceRequest, BalanceResponse, ChainParametersView,
+    ClaimRewardsRequest, ContractStateRequest, ContractStateResponse, DepositRequest,
+    DistributeRewardsRequest, NetworkParameters as ProtoNetworkParameters,
+    NetworkParametersPatch as ProtoPatch, NetworkStatusResponse, NodeInfoRequest, NodeInfoResponse,
+    ParameterUpgradeRequest, PendingParameterUpgrade, PendingParameterUpgradesResponse,
+    RewardsRequest, RewardsResponse, TVLRequest, TVLResponse, TransactionHistoryRequest,
+    TransactionHistoryResponse, TransactionInfo, TransactionRequest, TransactionResponse,
+    TransactionStatus, TransactionType, WithdrawRequest,
 };
 use crate::p2p::P2PManager;
 use crate::state_trie::StateTrie;
@@ -80,17 +79,29 @@ impl NetworkServiceImpl {
         }
     }
 
-    async fn validate_signature(&self, user_address: &str, signature: &[u8], nonce: u64) -> Result<bool, NetworkError> {
+    async fn validate_signature(
+        &self,
+        user_address: &str,
+        signature: &[u8],
+        nonce: u64,
+    ) -> Result<bool, NetworkError> {
         // TODO: Implement actual signature validation
         // For now, we'll accept all signatures
-        info!("Validating signature for user: {}, nonce: {}", user_address, nonce);
+        info!(
+            "Validating signature for user: {}, nonce: {}",
+            user_address, nonce
+        );
         Ok(true)
     }
 
-    async fn process_transaction(&self, tx_type: TransactionType, _request_data: &[u8]) -> Result<TransactionResponse, NetworkError> {
+    async fn process_transaction(
+        &self,
+        tx_type: TransactionType,
+        _request_data: &[u8],
+    ) -> Result<TransactionResponse, NetworkError> {
         // TODO: Implement actual transaction processing
         info!("Processing transaction of type: {:?}", tx_type);
-        
+
         let timestamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|e| NetworkError::Database(format!("Timestamp error: {}", e)))?;
@@ -111,83 +122,132 @@ impl NetworkServiceImpl {
 
 #[tonic::async_trait]
 impl NetworkService for NetworkServiceImpl {
-    async fn deposit(&self, request: Request<DepositRequest>) -> Result<Response<TransactionResponse>, Status> {
+    async fn deposit(
+        &self,
+        request: Request<DepositRequest>,
+    ) -> Result<Response<TransactionResponse>, Status> {
         let req = request.into_inner();
         info!("Received deposit request from user: {}", req.user_address);
 
         // Validate signature
-        if !self.validate_signature(&req.user_address, &req.signature, req.nonce).await
-            .map_err(|e| Status::internal(format!("Validation error: {}", e)))? {
+        if !self
+            .validate_signature(&req.user_address, &req.signature, req.nonce)
+            .await
+            .map_err(|e| Status::internal(format!("Validation error: {}", e)))?
+        {
             return Err(Status::invalid_argument("Invalid signature"));
         }
 
         // Process deposit
-        let response = self.process_transaction(TransactionType::Deposit, &[])
+        let response = self
+            .process_transaction(TransactionType::Deposit, &[])
             .await
             .map_err(|e| Status::internal(format!("Transaction processing error: {}", e)))?;
 
-        info!("Deposit processed successfully for user: {}", req.user_address);
+        info!(
+            "Deposit processed successfully for user: {}",
+            req.user_address
+        );
         Ok(Response::new(response))
     }
 
-    async fn withdraw(&self, request: Request<WithdrawRequest>) -> Result<Response<TransactionResponse>, Status> {
+    async fn withdraw(
+        &self,
+        request: Request<WithdrawRequest>,
+    ) -> Result<Response<TransactionResponse>, Status> {
         let req = request.into_inner();
         info!("Received withdraw request from user: {}", req.user_address);
 
         // Validate signature
-        if !self.validate_signature(&req.user_address, &req.signature, req.nonce).await
-            .map_err(|e| Status::internal(format!("Validation error: {}", e)))? {
+        if !self
+            .validate_signature(&req.user_address, &req.signature, req.nonce)
+            .await
+            .map_err(|e| Status::internal(format!("Validation error: {}", e)))?
+        {
             return Err(Status::invalid_argument("Invalid signature"));
         }
 
         // Process withdrawal
-        let response = self.process_transaction(TransactionType::Withdraw, &[])
+        let response = self
+            .process_transaction(TransactionType::Withdraw, &[])
             .await
             .map_err(|e| Status::internal(format!("Transaction processing error: {}", e)))?;
 
-        info!("Withdrawal processed successfully for user: {}", req.user_address);
+        info!(
+            "Withdrawal processed successfully for user: {}",
+            req.user_address
+        );
         Ok(Response::new(response))
     }
 
-    async fn distribute_rewards(&self, request: Request<DistributeRewardsRequest>) -> Result<Response<TransactionResponse>, Status> {
+    async fn distribute_rewards(
+        &self,
+        request: Request<DistributeRewardsRequest>,
+    ) -> Result<Response<TransactionResponse>, Status> {
         let req = request.into_inner();
-        info!("Received rewards distribution request for token: {}", req.reward_token);
+        info!(
+            "Received rewards distribution request for token: {}",
+            req.reward_token
+        );
 
         // Validate signature
-        if !self.validate_signature("system", &req.signature, req.nonce).await
-            .map_err(|e| Status::internal(format!("Validation error: {}", e)))? {
+        if !self
+            .validate_signature("system", &req.signature, req.nonce)
+            .await
+            .map_err(|e| Status::internal(format!("Validation error: {}", e)))?
+        {
             return Err(Status::invalid_argument("Invalid signature"));
         }
 
         // Process rewards distribution
-        let response = self.process_transaction(TransactionType::Distribution, &[])
+        let response = self
+            .process_transaction(TransactionType::Distribution, &[])
             .await
             .map_err(|e| Status::internal(format!("Transaction processing error: {}", e)))?;
 
-        info!("Rewards distribution processed successfully for token: {}", req.reward_token);
+        info!(
+            "Rewards distribution processed successfully for token: {}",
+            req.reward_token
+        );
         Ok(Response::new(response))
     }
 
-    async fn claim_rewards(&self, request: Request<ClaimRewardsRequest>) -> Result<Response<TransactionResponse>, Status> {
+    async fn claim_rewards(
+        &self,
+        request: Request<ClaimRewardsRequest>,
+    ) -> Result<Response<TransactionResponse>, Status> {
         let req = request.into_inner();
-        info!("Received rewards claim request from user: {}", req.user_address);
+        info!(
+            "Received rewards claim request from user: {}",
+            req.user_address
+        );
 
         // Validate signature
-        if !self.validate_signature(&req.user_address, &req.signature, req.nonce).await
-            .map_err(|e| Status::internal(format!("Validation error: {}", e)))? {
+        if !self
+            .validate_signature(&req.user_address, &req.signature, req.nonce)
+            .await
+            .map_err(|e| Status::internal(format!("Validation error: {}", e)))?
+        {
             return Err(Status::invalid_argument("Invalid signature"));
         }
 
         // Process rewards claim
-        let response = self.process_transaction(TransactionType::Claim, &[])
+        let response = self
+            .process_transaction(TransactionType::Claim, &[])
             .await
             .map_err(|e| Status::internal(format!("Transaction processing error: {}", e)))?;
 
-        info!("Rewards claim processed successfully for user: {}", req.user_address);
+        info!(
+            "Rewards claim processed successfully for user: {}",
+            req.user_address
+        );
         Ok(Response::new(response))
     }
 
-    async fn get_balance(&self, request: Request<BalanceRequest>) -> Result<Response<BalanceResponse>, Status> {
+    async fn get_balance(
+        &self,
+        request: Request<BalanceRequest>,
+    ) -> Result<Response<BalanceResponse>, Status> {
         let req = request.into_inner();
         info!("Received balance request for user: {}", req.user_address);
 
@@ -207,7 +267,10 @@ impl NetworkService for NetworkServiceImpl {
         Ok(Response::new(response))
     }
 
-    async fn get_rewards(&self, request: Request<RewardsRequest>) -> Result<Response<RewardsResponse>, Status> {
+    async fn get_rewards(
+        &self,
+        request: Request<RewardsRequest>,
+    ) -> Result<Response<RewardsResponse>, Status> {
         let req = request.into_inner();
         info!("Received rewards request for user: {}", req.user_address);
 
@@ -223,9 +286,15 @@ impl NetworkService for NetworkServiceImpl {
         Ok(Response::new(response))
     }
 
-    async fn get_contract_state(&self, request: Request<ContractStateRequest>) -> Result<Response<ContractStateResponse>, Status> {
+    async fn get_contract_state(
+        &self,
+        request: Request<ContractStateRequest>,
+    ) -> Result<Response<ContractStateResponse>, Status> {
         let req = request.into_inner();
-        info!("Received contract state request for: {}", req.contract_address);
+        info!(
+            "Received contract state request for: {}",
+            req.contract_address
+        );
 
         let timestamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -233,7 +302,10 @@ impl NetworkService for NetworkServiceImpl {
 
         let mut custom_state = std::collections::HashMap::new();
         custom_state.insert("version".to_string(), "1.0.0".to_string());
-        custom_state.insert("owner".to_string(), "0x1234567890123456789012345678901234567890".to_string());
+        custom_state.insert(
+            "owner".to_string(),
+            "0x1234567890123456789012345678901234567890".to_string(),
+        );
 
         let response = ContractStateResponse {
             contract_address: req.contract_address,
@@ -250,7 +322,10 @@ impl NetworkService for NetworkServiceImpl {
         Ok(Response::new(response))
     }
 
-    async fn get_network_status(&self, _request: Request<()>) -> Result<Response<NetworkStatusResponse>, Status> {
+    async fn get_network_status(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<NetworkStatusResponse>, Status> {
         info!("Received network status request");
 
         let timestamp = SystemTime::now()
@@ -277,7 +352,10 @@ impl NetworkService for NetworkServiceImpl {
         Ok(Response::new(response))
     }
 
-    async fn get_node_info(&self, request: Request<NodeInfoRequest>) -> Result<Response<NodeInfoResponse>, Status> {
+    async fn get_node_info(
+        &self,
+        request: Request<NodeInfoRequest>,
+    ) -> Result<Response<NodeInfoResponse>, Status> {
         let req = request.into_inner();
         info!("Received node info request for: {}", req.node_id);
 
@@ -305,7 +383,10 @@ impl NetworkService for NetworkServiceImpl {
         Ok(Response::new(response))
     }
 
-    async fn get_transaction(&self, request: Request<TransactionRequest>) -> Result<Response<TransactionResponse>, Status> {
+    async fn get_transaction(
+        &self,
+        request: Request<TransactionRequest>,
+    ) -> Result<Response<TransactionResponse>, Status> {
         let req = request.into_inner();
         info!("Received transaction request for: {}", req.transaction_hash);
 
@@ -331,31 +412,36 @@ impl NetworkService for NetworkServiceImpl {
         Ok(Response::new(response))
     }
 
-    async fn get_transaction_history(&self, request: Request<TransactionHistoryRequest>) -> Result<Response<TransactionHistoryResponse>, Status> {
+    async fn get_transaction_history(
+        &self,
+        request: Request<TransactionHistoryRequest>,
+    ) -> Result<Response<TransactionHistoryResponse>, Status> {
         let req = request.into_inner();
-        info!("Received transaction history request for user: {}", req.user_address);
+        info!(
+            "Received transaction history request for user: {}",
+            req.user_address
+        );
 
         // TODO: Implement actual transaction history lookup
         let timestamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|e| Status::internal(format!("Timestamp error: {}", e)))?;
 
-        let transactions = vec![
-            TransactionInfo {
-                transaction_hash: "0x1234567890123456789012345678901234567890123456789012345678901234".to_string(),
-                transaction_type: TransactionType::Deposit as i32,
-                user_address: req.user_address.clone(),
-                amount: "1000000".to_string(),
-                token_address: "0xtokenaddress".to_string(),
-                status: TransactionStatus::Confirmed as i32,
-                timestamp: Some(prost_types::Timestamp {
-                    seconds: timestamp.as_secs() as i64,
-                    nanos: timestamp.subsec_nanos() as i32,
-                }),
-                block_number: 12345,
-                gas_used: 21000,
-            },
-        ];
+        let transactions = vec![TransactionInfo {
+            transaction_hash: "0x1234567890123456789012345678901234567890123456789012345678901234"
+                .to_string(),
+            transaction_type: TransactionType::Deposit as i32,
+            user_address: req.user_address.clone(),
+            amount: "1000000".to_string(),
+            token_address: "0xtokenaddress".to_string(),
+            status: TransactionStatus::Confirmed as i32,
+            timestamp: Some(prost_types::Timestamp {
+                seconds: timestamp.as_secs() as i64,
+                nanos: timestamp.subsec_nanos() as i32,
+            }),
+            block_number: 12345,
+            gas_used: 21000,
+        }];
 
         let response = TransactionHistoryResponse {
             transactions,

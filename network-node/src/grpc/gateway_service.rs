@@ -1,23 +1,22 @@
+use fastrand;
 use std::sync::Arc;
-use std::time::{SystemTime, Instant};
+use std::time::{Instant, SystemTime};
 use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
-use tracing::{info, warn, error};
-use fastrand;
+use tracing::{error, info, warn};
 
+use crate::chain_params::ChainParameterRegistry;
 use crate::database::ConnectionPool;
 use crate::error::NetworkError;
-use crate::chain_params::ChainParameterRegistry;
 use crate::grpc::gateway::{
-    gateway_service_server::GatewayService,
-    ChainParametersView, DepositRequest, WithdrawRequest, DistributeRewardsRequest,
-    ClaimRewardsRequest, NetworkParameters as GwNetworkParameters,
-    NetworkParametersPatch as GwNetworkParametersPatch, TransactionResponse, BalanceRequest,
-    BalanceResponse, RewardsRequest, RewardsResponse, ContractStateRequest, ContractStateResponse,
-    NetworkStatusResponse, NodeInfoRequest, NodeInfoResponse, ParameterUpgradeRequest,
-    PendingParameterUpgrade, PendingParameterUpgradesResponse, TransactionRequest,
-    TransactionHistoryRequest, TransactionHistoryResponse, TransactionInfo, PaginationInfo,
-    HealthCheckResponse, ServiceHealth, TVLRequest, TVLResponse,
+    gateway_service_server::GatewayService, BalanceRequest, BalanceResponse, ChainParametersView,
+    ClaimRewardsRequest, ContractStateRequest, ContractStateResponse, DepositRequest,
+    DistributeRewardsRequest, HealthCheckResponse, NetworkParameters as GwNetworkParameters,
+    NetworkParametersPatch as GwNetworkParametersPatch, NetworkStatusResponse, NodeInfoRequest,
+    NodeInfoResponse, PaginationInfo, ParameterUpgradeRequest, PendingParameterUpgrade,
+    PendingParameterUpgradesResponse, RewardsRequest, RewardsResponse, ServiceHealth, TVLRequest,
+    TVLResponse, TransactionHistoryRequest, TransactionHistoryResponse, TransactionInfo,
+    TransactionRequest, TransactionResponse, WithdrawRequest,
 };
 use crate::grpc::network_service::NetworkServiceImpl;
 use crate::p2p::P2PManager;
@@ -68,7 +67,11 @@ impl GatewayServiceImpl {
         format!("req_{}", fastrand::u64(..))
     }
 
-    async fn process_with_tracking<F, T>(&self, request_id: String, operation: F) -> Result<T, Status>
+    async fn process_with_tracking<F, T>(
+        &self,
+        request_id: String,
+        operation: F,
+    ) -> Result<T, Status>
     where
         F: std::future::Future<Output = Result<T, Status>>,
     {
@@ -83,7 +86,10 @@ impl GatewayServiceImpl {
             }
             Err(e) => {
                 let duration = start_time.elapsed();
-                error!("Gateway request {} failed after {:?}: {}", request_id, duration, e);
+                error!(
+                    "Gateway request {} failed after {:?}: {}",
+                    request_id, duration, e
+                );
                 Err(e)
             }
         }
@@ -92,7 +98,10 @@ impl GatewayServiceImpl {
 
 #[tonic::async_trait]
 impl GatewayService for GatewayServiceImpl {
-    async fn deposit(&self, request: Request<DepositRequest>) -> Result<Response<TransactionResponse>, Status> {
+    async fn deposit(
+        &self,
+        request: Request<DepositRequest>,
+    ) -> Result<Response<TransactionResponse>, Status> {
         let mut req = request.into_inner();
         let request_id = if req.request_id.is_empty() {
             Self::generate_request_id()
@@ -111,22 +120,30 @@ impl GatewayService for GatewayServiceImpl {
                 timestamp: req.timestamp,
             });
 
-            let mut response = self.network_service.deposit(network_req).await?.into_inner();
+            let mut response = self
+                .network_service
+                .deposit(network_req)
+                .await?
+                .into_inner();
             response.request_id = request_id.clone();
-            
+
             // Add gateway-specific fields
             let processing_time = SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .map_err(|e| Status::internal(format!("Timestamp error: {}", e)))?;
-            
+
             response.processing_time_ms = Instant::now().elapsed().as_millis() as u64;
             response.status_url = format!("/v1/transaction/{}/status", response.transaction_hash);
 
             Ok(response)
-        }).await
+        })
+        .await
     }
 
-    async fn withdraw(&self, request: Request<WithdrawRequest>) -> Result<Response<TransactionResponse>, Status> {
+    async fn withdraw(
+        &self,
+        request: Request<WithdrawRequest>,
+    ) -> Result<Response<TransactionResponse>, Status> {
         let mut req = request.into_inner();
         let request_id = if req.request_id.is_empty() {
             Self::generate_request_id()
@@ -145,16 +162,24 @@ impl GatewayService for GatewayServiceImpl {
                 timestamp: req.timestamp,
             });
 
-            let mut response = self.network_service.withdraw(network_req).await?.into_inner();
+            let mut response = self
+                .network_service
+                .withdraw(network_req)
+                .await?
+                .into_inner();
             response.request_id = request_id.clone();
             response.processing_time_ms = Instant::now().elapsed().as_millis() as u64;
             response.status_url = format!("/v1/transaction/{}/status", response.transaction_hash);
 
             Ok(response)
-        }).await
+        })
+        .await
     }
 
-    async fn distribute_rewards(&self, request: Request<DistributeRewardsRequest>) -> Result<Response<TransactionResponse>, Status> {
+    async fn distribute_rewards(
+        &self,
+        request: Request<DistributeRewardsRequest>,
+    ) -> Result<Response<TransactionResponse>, Status> {
         let mut req = request.into_inner();
         let request_id = if req.request_id.is_empty() {
             Self::generate_request_id()
@@ -172,16 +197,24 @@ impl GatewayService for GatewayServiceImpl {
                 timestamp: req.timestamp,
             });
 
-            let mut response = self.network_service.distribute_rewards(network_req).await?.into_inner();
+            let mut response = self
+                .network_service
+                .distribute_rewards(network_req)
+                .await?
+                .into_inner();
             response.request_id = request_id.clone();
             response.processing_time_ms = Instant::now().elapsed().as_millis() as u64;
             response.status_url = format!("/v1/transaction/{}/status", response.transaction_hash);
 
             Ok(response)
-        }).await
+        })
+        .await
     }
 
-    async fn claim_rewards(&self, request: Request<ClaimRewardsRequest>) -> Result<Response<TransactionResponse>, Status> {
+    async fn claim_rewards(
+        &self,
+        request: Request<ClaimRewardsRequest>,
+    ) -> Result<Response<TransactionResponse>, Status> {
         let mut req = request.into_inner();
         let request_id = if req.request_id.is_empty() {
             Self::generate_request_id()
@@ -198,30 +231,42 @@ impl GatewayService for GatewayServiceImpl {
                 timestamp: req.timestamp,
             });
 
-            let mut response = self.network_service.claim_rewards(network_req).await?.into_inner();
+            let mut response = self
+                .network_service
+                .claim_rewards(network_req)
+                .await?
+                .into_inner();
             response.request_id = request_id.clone();
             response.processing_time_ms = Instant::now().elapsed().as_millis() as u64;
             response.status_url = format!("/v1/transaction/{}/status", response.transaction_hash);
 
             Ok(response)
-        }).await
+        })
+        .await
     }
 
-    async fn get_balance(&self, request: Request<BalanceRequest>) -> Result<Response<BalanceResponse>, Status> {
+    async fn get_balance(
+        &self,
+        request: Request<BalanceRequest>,
+    ) -> Result<Response<BalanceResponse>, Status> {
         let req = request.into_inner();
         let request_id = Self::generate_request_id();
 
         self.process_with_tracking(request_id, async move {
-            let mut response = self.network_service.get_balance(Request::new(crate::grpc::network::BalanceRequest {
-                user_address: req.user_address.clone(),
-                token_address: req.token_address.clone(),
-            })).await?.into_inner();
+            let mut response = self
+                .network_service
+                .get_balance(Request::new(crate::grpc::network::BalanceRequest {
+                    user_address: req.user_address.clone(),
+                    token_address: req.token_address.clone(),
+                }))
+                .await?
+                .into_inner();
 
             // Add gateway-specific fields
             let timestamp = SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .map_err(|e| Status::internal(format!("Timestamp error: {}", e)))?;
-            
+
             response.last_updated = Some(prost_types::Timestamp {
                 seconds: timestamp.as_secs() as i64,
                 nanos: timestamp.subsec_nanos() as i32,
@@ -229,37 +274,57 @@ impl GatewayService for GatewayServiceImpl {
             response.currency = "USD".to_string(); // Default currency
 
             Ok(response)
-        }).await
+        })
+        .await
     }
 
-    async fn get_rewards(&self, request: Request<RewardsRequest>) -> Result<Response<RewardsResponse>, Status> {
+    async fn get_rewards(
+        &self,
+        request: Request<RewardsRequest>,
+    ) -> Result<Response<RewardsResponse>, Status> {
         let req = request.into_inner();
         let request_id = Self::generate_request_id();
 
         self.process_with_tracking(request_id, async move {
-            let mut response = self.network_service.get_rewards(Request::new(crate::grpc::network::RewardsRequest {
-                user_address: req.user_address.clone(),
-            })).await?.into_inner();
+            let mut response = self
+                .network_service
+                .get_rewards(Request::new(crate::grpc::network::RewardsRequest {
+                    user_address: req.user_address.clone(),
+                }))
+                .await?
+                .into_inner();
 
             // Add gateway-specific fields
             response.last_claimed = Some(prost_types::Timestamp {
-                seconds: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64 - 86400, // Yesterday
+                seconds: SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64
+                    - 86400, // Yesterday
                 nanos: 0,
             });
             response.reward_token = "0xrewardtoken".to_string();
 
             Ok(response)
-        }).await
+        })
+        .await
     }
 
-    async fn get_contract_state(&self, request: Request<ContractStateRequest>) -> Result<Response<ContractStateResponse>, Status> {
+    async fn get_contract_state(
+        &self,
+        request: Request<ContractStateRequest>,
+    ) -> Result<Response<ContractStateResponse>, Status> {
         let req = request.into_inner();
         let request_id = Self::generate_request_id();
 
         self.process_with_tracking(request_id, async move {
-            let mut response = self.network_service.get_contract_state(Request::new(crate::grpc::network::ContractStateRequest {
-                contract_address: req.contract_address.clone(),
-            })).await?.into_inner();
+            let mut response = self
+                .network_service
+                .get_contract_state(Request::new(crate::grpc::network::ContractStateRequest {
+                    contract_address: req.contract_address.clone(),
+                }))
+                .await?
+                .into_inner();
 
             // Add gateway-specific fields
             response.contract_version = "1.0.0".to_string();
@@ -270,14 +335,22 @@ impl GatewayService for GatewayServiceImpl {
             ];
 
             Ok(response)
-        }).await
+        })
+        .await
     }
 
-    async fn get_network_status(&self, request: Request<()>) -> Result<Response<NetworkStatusResponse>, Status> {
+    async fn get_network_status(
+        &self,
+        request: Request<()>,
+    ) -> Result<Response<NetworkStatusResponse>, Status> {
         let request_id = Self::generate_request_id();
 
         self.process_with_tracking(request_id, async move {
-            let mut response = self.network_service.get_network_status(Request::new(())).await?.into_inner();
+            let mut response = self
+                .network_service
+                .get_network_status(Request::new(()))
+                .await?
+                .into_inner();
 
             // Add gateway-specific fields
             response.pending_transactions = 25;
@@ -289,17 +362,25 @@ impl GatewayService for GatewayServiceImpl {
             ];
 
             Ok(response)
-        }).await
+        })
+        .await
     }
 
-    async fn get_node_info(&self, request: Request<NodeInfoRequest>) -> Result<Response<NodeInfoResponse>, Status> {
+    async fn get_node_info(
+        &self,
+        request: Request<NodeInfoRequest>,
+    ) -> Result<Response<NodeInfoResponse>, Status> {
         let req = request.into_inner();
         let request_id = Self::generate_request_id();
 
         self.process_with_tracking(request_id, async move {
-            let mut response = self.network_service.get_node_info(Request::new(crate::grpc::network::NodeInfoRequest {
-                node_id: req.node_id.clone(),
-            })).await?.into_inner();
+            let mut response = self
+                .network_service
+                .get_node_info(Request::new(crate::grpc::network::NodeInfoRequest {
+                    node_id: req.node_id.clone(),
+                }))
+                .await?
+                .into_inner();
 
             // Add gateway-specific fields
             response.region = "us-east-1".to_string();
@@ -312,17 +393,25 @@ impl GatewayService for GatewayServiceImpl {
             ];
 
             Ok(response)
-        }).await
+        })
+        .await
     }
 
-    async fn get_transaction(&self, request: Request<TransactionRequest>) -> Result<Response<TransactionResponse>, Status> {
+    async fn get_transaction(
+        &self,
+        request: Request<TransactionRequest>,
+    ) -> Result<Response<TransactionResponse>, Status> {
         let req = request.into_inner();
         let request_id = Self::generate_request_id();
 
         self.process_with_tracking(request_id, async move {
-            let mut response = self.network_service.get_transaction(Request::new(crate::grpc::network::TransactionRequest {
-                transaction_hash: req.transaction_hash.clone(),
-            })).await?.into_inner();
+            let mut response = self
+                .network_service
+                .get_transaction(Request::new(crate::grpc::network::TransactionRequest {
+                    transaction_hash: req.transaction_hash.clone(),
+                }))
+                .await?
+                .into_inner();
 
             // Add gateway-specific fields
             response.request_id = request_id;
@@ -330,20 +419,33 @@ impl GatewayService for GatewayServiceImpl {
             response.status_url = format!("/v1/transaction/{}/status", response.transaction_hash);
 
             Ok(response)
-        }).await
+        })
+        .await
     }
 
-    async fn get_transaction_history(&self, request: Request<TransactionHistoryRequest>) -> Result<Response<TransactionHistoryResponse>, Status> {
+    async fn get_transaction_history(
+        &self,
+        request: Request<TransactionHistoryRequest>,
+    ) -> Result<Response<TransactionHistoryResponse>, Status> {
         let req = request.into_inner();
         let request_id = Self::generate_request_id();
 
         self.process_with_tracking(request_id, async move {
-            let mut response = self.network_service.get_transaction_history(Request::new(crate::grpc::network::TransactionHistoryRequest {
-                user_address: req.user_address.clone(),
-                limit: req.limit,
-                offset: req.offset,
-                transaction_type: req.transaction_type.clone().map(|t| t.parse().unwrap_or(0)),
-            })).await?.into_inner();
+            let mut response = self
+                .network_service
+                .get_transaction_history(Request::new(
+                    crate::grpc::network::TransactionHistoryRequest {
+                        user_address: req.user_address.clone(),
+                        limit: req.limit,
+                        offset: req.offset,
+                        transaction_type: req
+                            .transaction_type
+                            .clone()
+                            .map(|t| t.parse().unwrap_or(0)),
+                    },
+                ))
+                .await?
+                .into_inner();
 
             // Add pagination info
             let page_size = req.limit.unwrap_or(10);
@@ -362,11 +464,14 @@ impl GatewayService for GatewayServiceImpl {
             for transaction in &mut response.transactions {
                 transaction.confirmation_count = 12;
                 transaction.fee_paid = "21000".to_string();
-                transaction.metadata.insert("gateway_processed".to_string(), "true".to_string());
+                transaction
+                    .metadata
+                    .insert("gateway_processed".to_string(), "true".to_string());
             }
 
             Ok(response)
-        }).await
+        })
+        .await
     }
 
     async fn parameter_upgrade(
@@ -381,11 +486,13 @@ impl GatewayService for GatewayServiceImpl {
         };
 
         self.process_with_tracking(request_id.clone(), async move {
-            let net_patch = req.parameter_patch.map(|p| crate::grpc::network::NetworkParametersPatch {
-                max_block_body_bytes: p.max_block_body_bytes,
-                min_base_fee: p.min_base_fee,
-                max_transactions_per_block: p.max_transactions_per_block,
-            });
+            let net_patch =
+                req.parameter_patch
+                    .map(|p| crate::grpc::network::NetworkParametersPatch {
+                        max_block_body_bytes: p.max_block_body_bytes,
+                        min_base_fee: p.min_base_fee,
+                        max_transactions_per_block: p.max_transactions_per_block,
+                    });
 
             let network_req = Request::new(crate::grpc::network::ParameterUpgradeRequest {
                 parameter_patch: net_patch,
@@ -489,7 +596,10 @@ impl GatewayService for GatewayServiceImpl {
         .await
     }
 
-    async fn check_health(&self, request: Request<()>) -> Result<Response<HealthCheckResponse>, Status> {
+    async fn check_health(
+        &self,
+        request: Request<()>,
+    ) -> Result<Response<HealthCheckResponse>, Status> {
         let request_id = Self::generate_request_id();
 
         self.process_with_tracking(request_id, async move {
@@ -547,7 +657,8 @@ impl GatewayService for GatewayServiceImpl {
             };
 
             Ok(response)
-        }).await
+        })
+        .await
     }
 
     // Note: WatchHealth is not implemented here as it requires streaming

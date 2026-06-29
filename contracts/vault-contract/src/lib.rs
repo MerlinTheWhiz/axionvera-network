@@ -1,16 +1,16 @@
 #![no_std]
 
+pub mod cross_contract;
 pub mod errors;
-#[cfg(test)]
-mod test;
 mod events;
 mod storage;
-pub mod cross_contract;
+#[cfg(test)]
+mod test;
 
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
 
-use crate::errors::{AuthorizationError, BalanceError, StateError, ValidationError, VaultError};
 use crate::cross_contract::CrossContractClient;
+use crate::errors::{AuthorizationError, BalanceError, StateError, ValidationError, VaultError};
 
 #[contract]
 pub struct VaultContract;
@@ -27,8 +27,6 @@ impl VaultContract {
         deposit_token: Address,
         reward_token: Address,
         vesting_period: u64,
-        target_deposits: i128,
-        utilization_multipliers: soroban_sdk::Vec<storage::MultiplierPoint>,
     ) -> Result<(), VaultError> {
         storage::require_not_paused(&e)?;
         if storage::is_initialized(&e) {
@@ -36,10 +34,11 @@ impl VaultContract {
         }
 
         validate_distinct_token_addresses(&deposit_token, &reward_token)?;
-        validate_utilization_multipliers(&utilization_multipliers)?;
 
         admin.require_auth();
 
+        let target_deposits = 0_i128;
+        let utilization_multipliers = soroban_sdk::Vec::new(&e);
         storage::initialize_state(
             &e,
             &admin,
@@ -285,6 +284,34 @@ impl VaultContract {
         storage::get_reward_token(&e)
     }
 
+    pub fn weighted_total_deposits(e: Env) -> Result<i128, VaultError> {
+        storage::get_weighted_total_deposits(&e)
+    }
+
+    pub fn lock_duration_models(
+        e: Env,
+    ) -> Result<soroban_sdk::Vec<storage::LockDurationModel>, VaultError> {
+        storage::require_initialized(&e)?;
+        Ok(storage::get_lock_duration_models(&e))
+    }
+
+    pub fn set_lock_duration_models(
+        e: Env,
+        admin: Address,
+        models: soroban_sdk::Vec<storage::LockDurationModel>,
+    ) -> Result<(), VaultError> {
+        storage::require_initialized(&e)?;
+        let stored_admin = storage::get_admin(&e)?;
+        if admin != stored_admin {
+            return Err(AuthorizationError::Unauthorized.into());
+        }
+        admin.require_auth();
+
+        storage::validate_lock_duration_models(&models)?;
+        storage::set_lock_duration_models(&e, &models);
+        Ok(())
+    }
+
     pub fn pause_contract(e: Env) -> Result<(), VaultError> {
         storage::require_initialized(&e)?;
         let admin = storage::get_admin(&e)?;
@@ -308,7 +335,8 @@ impl VaultContract {
         let admin = storage::get_admin(&e)?;
         admin.require_auth();
 
-        e.deployer().update_current_contract_wasm(new_wasm_hash.clone());
+        e.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
         events::emit_upgrade(&e, admin, new_wasm_hash);
 
         Ok(())
@@ -331,7 +359,12 @@ impl VaultContract {
         Ok(())
     }
 
-    pub fn deposit_asset(e: Env, from: Address, asset: Address, amount: i128) -> Result<(), VaultError> {
+    pub fn deposit_asset(
+        e: Env,
+        from: Address,
+        asset: Address,
+        amount: i128,
+    ) -> Result<(), VaultError> {
         storage::require_not_paused(&e)?;
         storage::require_initialized(&e)?;
         validate_positive_amount(amount)?;
@@ -356,7 +389,12 @@ impl VaultContract {
         })
     }
 
-    pub fn withdraw_asset(e: Env, to: Address, asset: Address, amount: i128) -> Result<(), VaultError> {
+    pub fn withdraw_asset(
+        e: Env,
+        to: Address,
+        asset: Address,
+        amount: i128,
+    ) -> Result<(), VaultError> {
         storage::require_not_paused(&e)?;
         storage::require_initialized(&e)?;
         validate_positive_amount(amount)?;
@@ -383,7 +421,12 @@ impl VaultContract {
         })
     }
 
-    pub fn distribute_rewards_for_asset(e: Env, admin: Address, asset: Address, amount: i128) -> Result<i128, VaultError> {
+    pub fn distribute_rewards_for_asset(
+        e: Env,
+        admin: Address,
+        asset: Address,
+        amount: i128,
+    ) -> Result<i128, VaultError> {
         storage::require_initialized(&e)?;
         validate_positive_amount(amount)?;
 
@@ -420,7 +463,11 @@ impl VaultContract {
         })
     }
 
-    pub fn claim_rewards_for_asset(e: Env, user: Address, asset: Address) -> Result<i128, VaultError> {
+    pub fn claim_rewards_for_asset(
+        e: Env,
+        user: Address,
+        asset: Address,
+    ) -> Result<i128, VaultError> {
         storage::require_not_paused(&e)?;
         storage::require_initialized(&e)?;
         user.require_auth();
@@ -467,11 +514,19 @@ impl VaultContract {
         storage::get_asset_reward_index(&e, &asset)
     }
 
-    pub fn pending_rewards_for_asset(e: Env, user: Address, asset: Address) -> Result<i128, VaultError> {
+    pub fn pending_rewards_for_asset(
+        e: Env,
+        user: Address,
+        asset: Address,
+    ) -> Result<i128, VaultError> {
         storage::pending_user_asset_rewards_view(&e, &user, &asset)
     }
 
-    pub fn vested_rewards_for_asset(e: Env, user: Address, asset: Address) -> Result<i128, VaultError> {
+    pub fn vested_rewards_for_asset(
+        e: Env,
+        user: Address,
+        asset: Address,
+    ) -> Result<i128, VaultError> {
         storage::vested_user_asset_rewards_view(&e, &user, &asset)
     }
 
@@ -538,8 +593,10 @@ where
 
 #[cfg(test)]
 mod precision_tests {
-    use super::storage::{checked_accrued_rewards, checked_reward_index_increment, PRECISION_FACTOR};
     use super::errors::VaultError;
+    use super::storage::{
+        checked_accrued_rewards, checked_reward_index_increment, PRECISION_FACTOR,
+    };
 
     #[test]
     fn increment_basic() {

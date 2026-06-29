@@ -2,14 +2,13 @@ use soroban_sdk::{Address, BytesN, Env};
 
 use axionvera_core;
 use axionvera_events::{
-    self,
-    AdminTransferAcceptedEvent, AdminTransferProposedEvent, AssetAddedEvent, AssetClaimEvent,
+    self, AdminTransferAcceptedEvent, AdminTransferProposedEvent, AssetAddedEvent, AssetClaimEvent,
     AssetDepositEvent, AssetDistributeEvent, AssetWithdrawEvent, ClaimEvent, DepositEvent,
     DistributeEvent, InitializeEvent, LockEvent, PauseEvent, UnlockEvent, UnpauseEvent,
-    UpgradeEvent, WithdrawEvent, EVENT_VERSION, PROTOCOL, ACT_INIT, ACT_DEPOSIT, ACT_WITHDRAW,
-    ACT_DISTRIBUTE, ACT_CLAIM, ACT_LOCK, ACT_UNLOCK, ACT_ADMIN_PROPOSED, ACT_ADMIN_ACCEPTED,
-    ACT_UPGRADE, ACT_PAUSE, ACT_UNPAUSE, ACT_ASSET_ADDED, ACT_ASSET_DEPOSIT, ACT_ASSET_WITHDRAW,
-    ACT_ASSET_DISTRIBUTE, ACT_ASSET_CLAIM,
+    UpgradeEvent, WithdrawEvent, ACT_ADMIN_ACCEPTED, ACT_ADMIN_PROPOSED, ACT_ASSET_ADDED,
+    ACT_ASSET_CLAIM, ACT_ASSET_DEPOSIT, ACT_ASSET_DISTRIBUTE, ACT_ASSET_WITHDRAW, ACT_CLAIM,
+    ACT_DEPOSIT, ACT_DISTRIBUTE, ACT_INIT, ACT_LOCK, ACT_PAUSE, ACT_UNLOCK, ACT_UNPAUSE,
+    ACT_UPGRADE, ACT_WITHDRAW, EVENT_VERSION, PROTOCOL,
 };
 
 pub fn emit_initialize(e: &Env, admin: Address, deposit_token: Address, reward_token: Address) {
@@ -199,10 +198,22 @@ pub fn emit_asset_deposit(e: &Env, user: Address, asset: Address, amount: i128) 
             timestamp: ts,
         },
     );
-    axionvera_core::index_event(e, ACT_ASSET_DEPOSIT, Some(user.clone()), Some(asset), amount);
+    axionvera_core::index_event(
+        e,
+        ACT_ASSET_DEPOSIT,
+        Some(user.clone()),
+        Some(asset),
+        amount,
+    );
 }
 
-pub fn emit_asset_withdraw(e: &Env, user: Address, asset: Address, amount: i128, remaining_balance: i128) {
+pub fn emit_asset_withdraw(
+    e: &Env,
+    user: Address,
+    asset: Address,
+    amount: i128,
+    remaining_balance: i128,
+) {
     let ts = axionvera_events::ledger_timestamp(e);
     e.events().publish(
         (PROTOCOL, ACT_ASSET_WITHDRAW),
@@ -215,7 +226,13 @@ pub fn emit_asset_withdraw(e: &Env, user: Address, asset: Address, amount: i128,
             timestamp: ts,
         },
     );
-    axionvera_core::index_event(e, ACT_ASSET_WITHDRAW, Some(user.clone()), Some(asset), amount);
+    axionvera_core::index_event(
+        e,
+        ACT_ASSET_WITHDRAW,
+        Some(user.clone()),
+        Some(asset),
+        amount,
+    );
 }
 
 pub fn emit_asset_distribute(e: &Env, caller: Address, asset: Address, amount: i128) {

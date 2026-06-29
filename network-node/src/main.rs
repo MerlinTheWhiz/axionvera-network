@@ -1,5 +1,5 @@
-use axionvera_network_node::NetworkNode;
 use axionvera_network_node::config::TracingExporter;
+use axionvera_network_node::NetworkNode;
 
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]

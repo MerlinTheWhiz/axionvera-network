@@ -19,7 +19,13 @@ pub trait VaultEventEmitter {
     fn emit_unpause(e: &Env, admin: Address);
     fn emit_asset_added(e: &Env, asset: Address);
     fn emit_asset_deposit(e: &Env, user: Address, asset: Address, amount: i128);
-    fn emit_asset_withdraw(e: &Env, user: Address, asset: Address, amount: i128, remaining_balance: i128);
+    fn emit_asset_withdraw(
+        e: &Env,
+        user: Address,
+        asset: Address,
+        amount: i128,
+        remaining_balance: i128,
+    );
     fn emit_asset_distribute(e: &Env, caller: Address, asset: Address, amount: i128);
     fn emit_asset_claim_rewards(e: &Env, user: Address, asset: Address, amount: i128);
 }

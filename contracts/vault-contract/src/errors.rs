@@ -51,6 +51,10 @@ pub enum ValidationError {
     InsufficientRewardAmount,
     /// Thrown when a lock duration is zero.
     InvalidLockDuration,
+    /// Thrown when a requested lock duration is not configured.
+    UnsupportedLockDuration,
+    /// Thrown when the lock duration model configuration is malformed.
+    InvalidLockConfiguration,
     /// Thrown when utilization parameters are invalid (e.g., not sorted).
     InvalidUtilizationParameters,
 }
@@ -140,14 +144,18 @@ pub enum VaultError {
     InsufficientRewardAmount = 18,
     /// Lock duration must be greater than zero
     InvalidLockDuration = 19,
+    /// Requested lock duration is not configured
+    UnsupportedLockDuration = 20,
+    /// Lock duration configuration is malformed
+    InvalidLockConfiguration = 21,
     /// Contract upgrade failed
-    UpgradeFailed = 20,
+    UpgradeFailed = 22,
     /// The operation would exceed the per-transaction budget limit
-    OperationLimitExceeded = 21,
+    OperationLimitExceeded = 23,
     /// Utilization parameters are invalid (e.g., not sorted)
-    InvalidUtilizationParameters = 22,
+    InvalidUtilizationParameters = 24,
     /// Cross-contract call failed
-    CrossContractCallFailed = 23,
+    CrossContractCallFailed = 25,
 }
 
 impl VaultError {
@@ -229,6 +237,14 @@ impl VaultError {
                 category: ErrorCategory::Validation,
                 message: "lock duration must be greater than zero",
             },
+            Self::UnsupportedLockDuration => ErrorInfo {
+                category: ErrorCategory::Validation,
+                message: "requested lock duration is not configured",
+            },
+            Self::InvalidLockConfiguration => ErrorInfo {
+                category: ErrorCategory::Validation,
+                message: "lock duration models are invalid",
+            },
             Self::UpgradeFailed => ErrorInfo {
                 category: ErrorCategory::Authorization,
                 message: "contract upgrade failed",
@@ -290,6 +306,8 @@ impl From<ValidationError> for VaultError {
             ValidationError::InvalidTokenConfiguration => Self::InvalidTokenConfiguration,
             ValidationError::InsufficientRewardAmount => Self::InsufficientRewardAmount,
             ValidationError::InvalidLockDuration => Self::InvalidLockDuration,
+            ValidationError::UnsupportedLockDuration => Self::UnsupportedLockDuration,
+            ValidationError::InvalidLockConfiguration => Self::InvalidLockConfiguration,
             ValidationError::InvalidUtilizationParameters => Self::InvalidUtilizationParameters,
         }
     }

@@ -13,7 +13,7 @@ use crate::error::NetworkError;
 use crate::error_middleware::{ErrorMiddleware, ErrorMiddlewareConfig};
 use crate::horizon_client::HorizonClient;
 use crate::metrics::MetricsCollector;
-use crate::signing::{SigningService, SignerFactory};
+use crate::signing::{SignerFactory, SigningService};
 use crate::stellar_service::StellarService;
 use std::path::Path;
 
@@ -33,15 +33,15 @@ pub mod horizon_client;
 pub mod indexer;
 pub mod memory_profiling;
 pub mod metrics;
-pub mod pb;
 pub mod p2p;
+pub mod pb;
 pub mod rate_limiter;
 pub mod shutdown;
 pub mod signing;
-pub mod stellar_service;
 pub mod soroban_rpc_client;
 pub mod soroban_service;
 pub mod state_trie;
+pub mod stellar_service;
 pub mod telemetry;
 
 /// Main network node application
@@ -91,7 +91,7 @@ impl NetworkNode {
         // Initialize signing service
         let cache_ttl_seconds = config.cache_ttl_seconds;
         let mut signing_service = SigningService::new(cache_ttl_seconds);
-        
+
         // Configure signer if provided
         if let Some(signer_config) = &config.signing_config {
             let signer = SignerFactory::create_signer(signer_config.clone()).await?;
@@ -103,26 +103,37 @@ impl NetworkNode {
             info!("No signing configuration provided, using local signer");
             // For development, create a local signer
             let local_signer = crate::signing::LocalSigner::new("default_key.pem").await?;
-            signing_service.add_signer("default".to_string(), Arc::new(local_signer)).await?;
-            signing_service.set_default_signer("default".to_string()).await?;
+            signing_service
+                .add_signer("default".to_string(), Arc::new(local_signer))
+                .await?;
+            signing_service
+                .set_default_signer("default".to_string())
+                .await?;
         }
-        
+
         let signing_service = Arc::new(signing_service);
 
         // Initialize Horizon client
         let horizon_client = Arc::new(HorizonClient::new(config.horizon_config.clone()));
-        info!("Initialized Horizon client with {} providers", horizon_client.get_provider_statuses().await.len());
+        info!(
+            "Initialized Horizon client with {} providers",
+            horizon_client.get_provider_statuses().await.len()
+        );
 
         // Initialize Stellar service
         let stellar_service = Arc::new(StellarService::new(horizon_client.clone()));
         info!("Initialized Stellar service");
 
         // Initialize Soroban RPC client
-        let soroban_rpc_client = Arc::new(soroban_rpc_client::SorobanRpcClient::new(config.soroban_config.clone()));
+        let soroban_rpc_client = Arc::new(soroban_rpc_client::SorobanRpcClient::new(
+            config.soroban_config.clone(),
+        ));
         info!("Initialized Soroban RPC client");
 
         // Initialize Soroban service
-        let soroban_service = Arc::new(soroban_service::SorobanService::new(soroban_rpc_client.clone()));
+        let soroban_service = Arc::new(soroban_service::SorobanService::new(
+            soroban_rpc_client.clone(),
+        ));
         info!("Initialized Soroban service");
 
         // Initialize event indexer
@@ -133,15 +144,16 @@ impl NetworkNode {
             config.vault_contract_address.clone(),
             5, // poll interval in seconds
         ));
-        info!("Initialized event indexer for contract: {}", config.vault_contract_address);
+        info!(
+            "Initialized event indexer for contract: {}",
+            config.vault_contract_address
+        );
 
-        let chain_parameters = Arc::new(RwLock::new(
-            match &config.genesis_config_path {
-                Some(p) => crate::chain_params::ChainParameterRegistry::from_genesis_file(Path::new(p))
-                    .map_err(|e| NetworkError::Config(e))?,
-                None => crate::chain_params::ChainParameterRegistry::development_default(),
-            },
-        ));
+        let chain_parameters = Arc::new(RwLock::new(match &config.genesis_config_path {
+            Some(p) => crate::chain_params::ChainParameterRegistry::from_genesis_file(Path::new(p))
+                .map_err(|e| NetworkError::Config(e))?,
+            None => crate::chain_params::ChainParameterRegistry::development_default(),
+        }));
 
         // Initialize enhanced HTTP server
         let http_server = EnhancedHttpServer::new(
@@ -345,7 +357,7 @@ impl NetworkNode {
         info!("All database connections closed");
         Ok(())
     }
-    
+
     /// Get a reference to the signing service
     pub fn signing_service(&self) -> &Arc<SigningService> {
         &self.signing_service
