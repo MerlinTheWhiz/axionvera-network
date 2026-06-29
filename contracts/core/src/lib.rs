@@ -10,6 +10,7 @@ use axionvera_storage::{
     get_governance_state, get_reward_state, get_staking_state, get_treasury_state, get_vault_state,
     set_governance_state, set_reward_state, set_staking_state, set_treasury_state, set_vault_state,
 };
+use axionvera_snapshots as snapshots;
 
 /// Maximum number of event log entries stored per user index.
 const MAX_EVENTS_PER_USER: u32 = 50;
@@ -195,4 +196,28 @@ pub fn transition_governance_state(
 /// Get current Governance state
 pub fn current_governance_state(e: &Env, proposal_id: Symbol) -> GovernanceState {
     get_governance_state(e, proposal_id)
+}
+
+// ===========================================================================
+// SNAPSHOT INTEGRATION
+// ===========================================================================
+
+/// Take a protocol snapshot.
+pub fn take_snapshot(e: &Env) -> Result<snapshots::ProtocolSnapshot, snapshots::SnapshotError> {
+    snapshots::take_snapshot(e, None)
+}
+
+/// Get a protocol snapshot by ID.
+pub fn get_snapshot(e: &Env, id: u64) -> Option<snapshots::ProtocolSnapshot> {
+    snapshots::get_snapshot(e, id)
+}
+
+/// Get the latest protocol snapshot.
+pub fn get_latest_snapshot(e: &Env) -> Option<snapshots::ProtocolSnapshot> {
+    snapshots::get_latest_snapshot(e)
+}
+
+/// Get the protocol snapshot history.
+pub fn get_snapshot_history(e: &Env, limit: u32) -> Vec<snapshots::ProtocolSnapshot> {
+    snapshots::get_snapshot_history(e, limit)
 }

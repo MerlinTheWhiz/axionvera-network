@@ -125,8 +125,8 @@ pub enum DataKey {
     DelegationOperators(Address),
     /// Maximum number of delegations allowed per user
     MaxDelegationsPerUser,
-    /// Legacy/simple delegate authorization record
-    DelegatePermissions(Address, Address),
+    UserLiquidBalance(Address),
+    UserLocks(Address),
 }
 
 /// The global state of the vault contract.
@@ -607,20 +607,14 @@ pub fn authorize_delegate(
         created_at: e.ledger().timestamp(),
         active: true,
     };
-    e.storage().instance().set(
-        &DataKey::DelegatePermissions(owner.clone(), delegate.clone()),
-        &record,
-    );
+    e.storage().instance().set(&DataKey::delegate_permissions(owner.clone(), delegate.clone()), &record);
     bump_instance_ttl(e);
     Ok(())
 }
 
 pub fn revoke_delegate(e: &Env, owner: &Address, delegate: &Address) -> Result<(), VaultError> {
     require_initialized(e)?;
-    e.storage().instance().remove(&DataKey::DelegatePermissions(
-        owner.clone(),
-        delegate.clone(),
-    ));
+    e.storage().instance().remove(&DataKey::delegate_permissions(owner.clone(), delegate.clone()));
     bump_instance_ttl(e);
     Ok(())
 }
@@ -631,13 +625,10 @@ pub fn get_delegate_permissions(
     delegate: &Address,
 ) -> Result<u32, VaultError> {
     require_initialized(e)?;
-    let record =
-        e.storage()
-            .instance()
-            .get::<_, DelegateAuthorization>(&DataKey::DelegatePermissions(
-                owner.clone(),
-                delegate.clone(),
-            ));
+    let record = e
+        .storage()
+        .instance()
+        .get::<_, DelegateAuthorization>(&DataKey::delegate_permissions(owner.clone(), delegate.clone()));
     match record {
         Some(auth) if auth.active => {
             bump_instance_ttl(e);
@@ -653,13 +644,10 @@ pub fn require_delegate_permission(
     delegate: &Address,
     permission: u32,
 ) -> Result<(), VaultError> {
-    let record =
-        e.storage()
-            .instance()
-            .get::<_, DelegateAuthorization>(&DataKey::DelegatePermissions(
-                owner.clone(),
-                delegate.clone(),
-            ));
+    let record = e
+        .storage()
+        .instance()
+        .get::<_, DelegateAuthorization>(&DataKey::delegate_permissions(owner.clone(), delegate.clone()));
     match record {
         Some(auth) if auth.active && (auth.permissions & permission) != 0 => Ok(()),
         _ => Err(AuthorizationError::Unauthorized.into()),
