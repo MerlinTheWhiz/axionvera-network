@@ -14,7 +14,9 @@ axionvera-auth = { path = "../auth" }
 axionvera-events = { path = "../events" }
 axionvera-accounting = { path = "../accounting" }
 axionvera-core = { path = "../core" }
+axionvera-fees = { path = "../fees" }
 axionvera-interfaces = { path = "../interfaces" }
+axionvera-storage = { path = "../storage" }
 axionvera-security = { path = "../security" }
 
 [dev-dependencies]

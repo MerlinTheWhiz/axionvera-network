@@ -13,6 +13,9 @@ mod test;
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
 
 use axionvera_accounting as accounting;
+use axionvera_fees as fee_framework;
+use axionvera_interfaces::{FeeConfig, FeeReceipt, FeeTotals, FeeType};
+use axionvera_storage as protocol_storage;
 
 use crate::cross_contract::CrossContractClient;
 use crate::errors::{
@@ -140,19 +143,29 @@ impl VaultContract {
                 amount,
             )?;
 
-            let (_state, _position) = storage::store_deposit(&e, &from, amount)?;
+            let net_amount = collect_protocol_fee(
+                &e,
+                FeeType::Deposit,
+                from.clone(),
+                Some(deposit_token.clone()),
+                amount,
+                accounting::OperationResources::new(1, 1, 1, 1),
+            )?
+            .unwrap_or(amount);
+
+            let (_state, _position) = storage::store_deposit(&e, &from, net_amount)?;
             account_operation(
                 &e,
                 accounting::AccountingCategory::Vault,
                 accounting::AccountingOperation::VaultDeposit,
                 Some(from.clone()),
-                Some(state.deposit_token.clone()),
-                amount,
+                Some(deposit_token.clone()),
+                net_amount,
                 0,
-                amount,
+                net_amount,
                 accounting::OperationResources::new(5, 5, 2, 1),
             )?;
-            events::emit_deposit(&e, from.clone(), amount);
+            events::emit_deposit(&e, from.clone(), net_amount);
             Ok(())
         })
     }
@@ -196,8 +209,18 @@ impl VaultContract {
                 amount,
             )?;
 
-            let (_state, _position) = storage::store_deposit(&e, &owner, amount)?;
-            events::emit_deposit(&e, owner.clone(), amount);
+            let net_amount = collect_protocol_fee(
+                &e,
+                FeeType::Deposit,
+                owner.clone(),
+                Some(state.deposit_token.clone()),
+                amount,
+                accounting::OperationResources::new(1, 1, 1, 1),
+            )?
+            .unwrap_or(amount);
+
+            let (_state, _position) = storage::store_deposit(&e, &owner, net_amount)?;
+            events::emit_deposit(&e, owner.clone(), net_amount);
             events::emit_delegate_action(&e, owner.clone(), delegate.clone(), symbol_short!("deposit"));
             Ok(())
         })
@@ -211,6 +234,15 @@ impl VaultContract {
 
         with_non_reentrant(&e, || {
             let (state, position) = storage::store_withdraw(&e, &to, amount)?;
+            let net_amount = collect_protocol_fee(
+                &e,
+                FeeType::Withdrawal,
+                to.clone(),
+                Some(state.deposit_token.clone()),
+                amount,
+                accounting::OperationResources::new(1, 1, 1, 1),
+            )?
+            .unwrap_or(amount);
 
             account_operation(
                 &e,
@@ -219,18 +251,18 @@ impl VaultContract {
                 Some(to.clone()),
                 Some(state.deposit_token.clone()),
                 0,
-                amount,
-                amount,
+                net_amount,
+                net_amount,
                 accounting::OperationResources::new(6, 5, 2, 1),
             )?;
-            events::emit_withdraw(&e, to.clone(), amount, position.balance);
+            events::emit_withdraw(&e, to.clone(), net_amount, position.balance);
 
             CrossContractClient::token_transfer(
                 &e,
-                &deposit_token,
+                &state.deposit_token,
                 &e.current_contract_address(),
                 &to,
-                amount,
+                net_amount,
             )?;
 
             Ok(())
@@ -254,8 +286,17 @@ impl VaultContract {
         with_non_reentrant(&e, || {
             let state = storage::get_state(&e)?;
             let (state, position) = storage::store_withdraw(&e, &owner, amount)?;
+            let net_amount = collect_protocol_fee(
+                &e,
+                FeeType::Withdrawal,
+                owner.clone(),
+                Some(state.deposit_token.clone()),
+                amount,
+                accounting::OperationResources::new(1, 1, 1, 1),
+            )?
+            .unwrap_or(amount);
 
-            events::emit_withdraw(&e, owner.clone(), amount, position.balance);
+            events::emit_withdraw(&e, owner.clone(), net_amount, position.balance);
             events::emit_delegate_action(&e, owner.clone(), delegate.clone(), symbol_short!("withdraw"));
 
             CrossContractClient::token_transfer(
@@ -263,7 +304,7 @@ impl VaultContract {
                 &state.deposit_token,
                 &e.current_contract_address(),
                 &to,
-                amount,
+                net_amount,
             )?;
 
             Ok(())
@@ -293,19 +334,29 @@ impl VaultContract {
                 amount,
             )?;
 
-            let next_state = storage::store_reward_distribution(&e, amount)?;
+            let net_amount = collect_protocol_fee(
+                &e,
+                FeeType::Reward,
+                admin.clone(),
+                Some(reward_token_id.clone()),
+                amount,
+                accounting::OperationResources::new(1, 1, 1, 1),
+            )?
+            .unwrap_or(amount);
+
+            let next_state = storage::store_reward_distribution(&e, net_amount)?;
             account_operation(
                 &e,
                 accounting::AccountingCategory::Rewards,
                 accounting::AccountingOperation::RewardDistribute,
                 Some(admin.clone()),
                 Some(reward_token_id.clone()),
-                amount,
+                net_amount,
                 0,
-                amount,
+                net_amount,
                 accounting::OperationResources::new(4, 2, 2, 1),
             )?;
-            events::emit_distribute(&e, admin.clone(), amount);
+            events::emit_distribute(&e, admin.clone(), net_amount);
             Ok(next_state.reward_index)
         })
     }
@@ -510,6 +561,25 @@ impl VaultContract {
 
     pub fn reward_token(e: Env) -> Result<Address, VaultError> {
         storage::get_reward_token(&e)
+    }
+
+    pub fn set_fee_config(e: Env, admin: Address, config: FeeConfig) -> Result<(), VaultError> {
+        storage::require_initialized(&e)?;
+        let stored_admin = storage::get_admin(&e)?;
+        access::require_admin(&admin, &stored_admin)?;
+        fee_framework::validate_fee_config(&config).map_err(fee_error_to_vault_error)?;
+
+        protocol_storage::set_fee_config(&e, &config);
+        fee_framework::emit_fee_configured(&e, admin, &config);
+        Ok(())
+    }
+
+    pub fn fee_config(e: Env) -> Option<FeeConfig> {
+        protocol_storage::get_fee_config(&e)
+    }
+
+    pub fn fee_totals(e: Env, fee_type: FeeType) -> FeeTotals {
+        protocol_storage::get_fee_totals(&e, fee_type)
     }
 
     pub fn pause_contract(e: Env) -> Result<(), VaultError> {
@@ -795,19 +865,29 @@ impl VaultContract {
                 amount,
             )?;
 
-            let next_reward_index = storage::store_asset_reward_distribution(&e, &asset, amount)?;
+            let net_amount = collect_protocol_fee(
+                &e,
+                FeeType::Reward,
+                admin.clone(),
+                Some(reward_token_id.clone()),
+                amount,
+                accounting::OperationResources::new(1, 1, 1, 1),
+            )?
+            .unwrap_or(amount);
+
+            let next_reward_index = storage::store_asset_reward_distribution(&e, &asset, net_amount)?;
             account_operation(
                 &e,
                 accounting::AccountingCategory::Rewards,
                 accounting::AccountingOperation::AssetRewardDistribute,
                 Some(admin.clone()),
                 Some(asset.clone()),
-                amount,
+                net_amount,
                 0,
-                amount,
+                net_amount,
                 accounting::OperationResources::new(5, 3, 2, 1),
             )?;
-            events::emit_asset_distribute(&e, admin.clone(), asset.clone(), amount);
+            events::emit_asset_distribute(&e, admin.clone(), asset.clone(), net_amount);
             Ok(next_reward_index)
         })
     }
@@ -1210,6 +1290,50 @@ where
     result
 }
 
+fn collect_protocol_fee(
+    e: &Env,
+    fee_type: FeeType,
+    actor: Address,
+    asset: Option<Address>,
+    gross_amount: i128,
+    resources: accounting::OperationResources,
+) -> Result<Option<i128>, VaultError> {
+    let Some(config) = protocol_storage::get_fee_config(e) else {
+        return Ok(None);
+    };
+
+    let fee_bps = config.rate_for(fee_type);
+    if fee_bps == 0 {
+        return Ok(None);
+    }
+
+    let receipt = fee_framework::build_fee_receipt(
+        fee_type,
+        actor,
+        config.treasury.clone(),
+        asset.clone(),
+        gross_amount,
+        fee_bps,
+        e.ledger().timestamp(),
+    )
+    .map_err(fee_error_to_vault_error)?;
+
+    if receipt.fee_amount <= 0 {
+        return Ok(None);
+    }
+
+    let asset_address = asset.ok_or(VaultError::InvalidAddress)?;
+    CrossContractClient::token_transfer(
+        e,
+        &asset_address,
+        &e.current_contract_address(),
+        &config.treasury,
+        receipt.treasury_amount,
+    )?;
+    fee_framework::record_fee_collection(e, &receipt, resources).map_err(fee_error_to_vault_error)?;
+    Ok(Some(receipt.net_amount))
+}
+
 fn account_operation(
     e: &Env,
     category: accounting::AccountingCategory,
@@ -1235,6 +1359,14 @@ fn account_operation(
         },
     )
     .map_err(accounting_error_to_vault_error)
+}
+
+fn fee_error_to_vault_error(error: axionvera_interfaces::FeeError) -> VaultError {
+    match error {
+        axionvera_interfaces::FeeError::InvalidAmount => VaultError::InvalidAmount,
+        axionvera_interfaces::FeeError::InvalidFeeRate => VaultError::InvalidFeeRate,
+        axionvera_interfaces::FeeError::MathOverflow => VaultError::MathOverflow,
+    }
 }
 
 fn accounting_error_to_vault_error(error: accounting::AccountingError) -> VaultError {
