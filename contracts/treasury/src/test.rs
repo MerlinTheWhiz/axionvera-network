@@ -99,7 +99,14 @@ fn setup(
     treasury.initialize(&admin, &token_id);
     token.mint(&treasury_id, &10_000_i128);
 
-    (treasury, token, admin, treasury_id, recipient_a, recipient_b)
+    (
+        treasury,
+        token,
+        admin,
+        treasury_id,
+        recipient_a,
+        recipient_b,
+    )
 }
 
 #[test]
@@ -198,9 +205,51 @@ fn rejects_unknown_strategy_duplicate_distribution_and_low_balance() {
 
     treasury.distribute(&admin, &id(&e, 51), &strategy.id, &100_i128);
     let duplicate_result = treasury.try_distribute(&admin, &id(&e, 51), &strategy.id, &100_i128);
-    assert_eq!(duplicate_result, Err(Ok(TreasuryError::DuplicateDistribution)));
+    assert_eq!(
+        duplicate_result,
+        Err(Ok(TreasuryError::DuplicateDistribution))
+    );
 
     let low_balance_result =
         treasury.try_distribute(&admin, &id(&e, 52), &strategy.id, &100_000_i128);
-    assert_eq!(low_balance_result, Err(Ok(TreasuryError::InsufficientBalance)));
+    assert_eq!(
+        low_balance_result,
+        Err(Ok(TreasuryError::InsufficientBalance))
+    );
+}
+
+#[test]
+fn records_protocol_fee_and_reports_asset_balance() {
+    let e = Env::default();
+    e.ledger().set_timestamp(3_000);
+    let (treasury, token, admin, treasury_id, _recipient_a, _recipient_b) = setup(&e);
+    let payer = Address::generate(&e);
+    token.mint(&payer, &750_i128);
+
+    let record = treasury.record_fee(&admin, &id(&e, 60), &payer, &250_i128);
+
+    assert_eq!(token.balance(&payer), 500);
+    assert_eq!(token.balance(&treasury_id), 10_250);
+    assert_eq!(record.amount, 250);
+    assert_eq!(record.payer, payer);
+    assert_eq!(record.treasury_balance, 10_250);
+    assert_eq!(record.timestamp, 3_000);
+    assert_eq!(treasury.fee_record(&record.fee_id), Some(record));
+    assert_eq!(treasury.total_fees_recorded(), 250);
+    assert_eq!(treasury.asset_balance(), 10_250);
+}
+
+#[test]
+fn rejects_duplicate_fee_and_invalid_fee_amount() {
+    let e = Env::default();
+    let (treasury, token, admin, _treasury_id, _recipient_a, _recipient_b) = setup(&e);
+    let payer = Address::generate(&e);
+    token.mint(&payer, &100_i128);
+
+    let invalid = treasury.try_record_fee(&admin, &id(&e, 61), &payer, &0_i128);
+    assert_eq!(invalid, Err(Ok(TreasuryError::InvalidAmount)));
+
+    treasury.record_fee(&admin, &id(&e, 62), &payer, &50_i128);
+    let duplicate = treasury.try_record_fee(&admin, &id(&e, 62), &payer, &50_i128);
+    assert_eq!(duplicate, Err(Ok(TreasuryError::DuplicateFee)));
 }

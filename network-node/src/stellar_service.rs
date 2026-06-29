@@ -1,10 +1,10 @@
-use std::sync::Arc;
-use tracing::{debug, error, info};
-use serde::{Deserialize, Serialize};
 use crate::config::HorizonProvider;
 use crate::error::NetworkError;
 use crate::horizon_client::HorizonClient;
-use metrics::{gauge, counter};
+use metrics::{counter, gauge};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tracing::{debug, error, info};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
@@ -80,7 +80,11 @@ impl StellarService {
         let operation = |provider: HorizonProvider| {
             let account_id = account_id.to_string();
             Box::pin(async move {
-                let url = format!("{}/accounts/{}", provider.url.trim_end_matches('/'), account_id);
+                let url = format!(
+                    "{}/accounts/{}",
+                    provider.url.trim_end_matches('/'),
+                    account_id
+                );
                 let client = reqwest::Client::new();
 
                 let response = client
@@ -94,7 +98,11 @@ impl StellarService {
                     Ok(account)
                 } else {
                     let error_text = response.text().await.unwrap_or_default();
-                    Err(anyhow::anyhow!("HTTP {}: {}", response.status(), error_text))
+                    Err(anyhow::anyhow!(
+                        "HTTP {}: {}",
+                        response.status(),
+                        error_text
+                    ))
                 }
             })
         };
@@ -110,13 +118,23 @@ impl StellarService {
     }
 
     /// Get transaction information
-    pub async fn get_transaction(&self, transaction_hash: &str) -> Result<Transaction, NetworkError> {
-        debug!("Getting transaction information for hash: {}", transaction_hash);
+    pub async fn get_transaction(
+        &self,
+        transaction_hash: &str,
+    ) -> Result<Transaction, NetworkError> {
+        debug!(
+            "Getting transaction information for hash: {}",
+            transaction_hash
+        );
 
         let operation = |provider: HorizonProvider| {
             let tx_hash = transaction_hash.to_string();
             Box::pin(async move {
-                let url = format!("{}/transactions/{}", provider.url.trim_end_matches('/'), tx_hash);
+                let url = format!(
+                    "{}/transactions/{}",
+                    provider.url.trim_end_matches('/'),
+                    tx_hash
+                );
                 let client = reqwest::Client::new();
 
                 let response = client
@@ -130,7 +148,11 @@ impl StellarService {
                     Ok(transaction)
                 } else {
                     let error_text = response.text().await.unwrap_or_default();
-                    Err(anyhow::anyhow!("HTTP {}: {}", response.status(), error_text))
+                    Err(anyhow::anyhow!(
+                        "HTTP {}: {}",
+                        response.status(),
+                        error_text
+                    ))
                 }
             })
         };
@@ -152,7 +174,11 @@ impl StellarService {
         let operation = |provider: HorizonProvider| {
             let ledger_sequence = sequence;
             Box::pin(async move {
-                let url = format!("{}/ledgers/{}", provider.url.trim_end_matches('/'), ledger_sequence);
+                let url = format!(
+                    "{}/ledgers/{}",
+                    provider.url.trim_end_matches('/'),
+                    ledger_sequence
+                );
                 let client = reqwest::Client::new();
 
                 let response = client
@@ -166,7 +192,11 @@ impl StellarService {
                     Ok(ledger)
                 } else {
                     let error_text = response.text().await.unwrap_or_default();
-                    Err(anyhow::anyhow!("HTTP {}: {}", response.status(), error_text))
+                    Err(anyhow::anyhow!(
+                        "HTTP {}: {}",
+                        response.status(),
+                        error_text
+                    ))
                 }
             })
         };
@@ -192,7 +222,10 @@ impl StellarService {
 
         let operation = |provider: HorizonProvider| {
             Box::pin(async move {
-                let url = format!("{}/ledgers?order=desc&limit=1", provider.url.trim_end_matches('/'));
+                let url = format!(
+                    "{}/ledgers?order=desc&limit=1",
+                    provider.url.trim_end_matches('/')
+                );
                 let client = reqwest::Client::new();
 
                 let response = client
@@ -216,7 +249,11 @@ impl StellarService {
                     Err(anyhow::anyhow!("Invalid ledger response format"))
                 } else {
                     let error_text = response.text().await.unwrap_or_default();
-                    Err(anyhow::anyhow!("HTTP {}: {}", response.status(), error_text))
+                    Err(anyhow::anyhow!(
+                        "HTTP {}: {}",
+                        response.status(),
+                        error_text
+                    ))
                 }
             })
         };
@@ -237,7 +274,10 @@ impl StellarService {
     }
 
     /// Submit a transaction to the network
-    pub async fn submit_transaction(&self, transaction_xdr: &str) -> Result<Transaction, NetworkError> {
+    pub async fn submit_transaction(
+        &self,
+        transaction_xdr: &str,
+    ) -> Result<Transaction, NetworkError> {
         debug!("Submitting transaction to network");
 
         let operation = |provider: HorizonProvider| {
@@ -261,7 +301,11 @@ impl StellarService {
                     Ok(transaction)
                 } else {
                     let error_text = response.text().await.unwrap_or_default();
-                    Err(anyhow::anyhow!("HTTP {}: {}", response.status(), error_text))
+                    Err(anyhow::anyhow!(
+                        "HTTP {}: {}",
+                        response.status(),
+                        error_text
+                    ))
                 }
             })
         };
@@ -277,7 +321,9 @@ impl StellarService {
     }
 
     /// Get current Horizon provider status
-    pub async fn get_provider_status(&self) -> Result<Vec<crate::horizon_client::ProviderStatus>, NetworkError> {
+    pub async fn get_provider_status(
+        &self,
+    ) -> Result<Vec<crate::horizon_client::ProviderStatus>, NetworkError> {
         Ok(self.horizon_client.get_provider_statuses().await)
     }
 

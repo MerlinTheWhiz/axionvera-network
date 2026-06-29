@@ -4,6 +4,9 @@
 
 use super::*;
 use soroban_sdk::{
+    contract, contractimpl, contracttype,
+    testutils::{Address as _, Events, Ledger, LedgerInfo},
+    token, Address, Env, TryIntoVal,
     contracttype,
     testutils::{Address as _, Events, Ledger, LedgerInfo},
     token, xdr::ToXdr, Address, Env,
@@ -19,6 +22,68 @@ enum TokenDataKey {
 
 type VaultClient<'a> = VaultContractClient<'a>;
 
+#[contract]
+pub struct MockToken;
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum MockTokenDataKey {
+    Initialized,
+    Balance(Address),
+}
+
+#[contractimpl]
+impl MockToken {
+    pub fn __constructor(e: Env) {
+        e.storage()
+            .instance()
+            .set(&MockTokenDataKey::Initialized, &true);
+    }
+
+    pub fn mint(e: Env, to: Address, amount: i128) {
+        let current = mock_token_balance(&e, &to);
+        let next = current.checked_add(amount).expect("mint overflow");
+        mock_token_set_balance(&e, &to, next);
+    }
+
+    pub fn balance(e: Env, id: Address) -> i128 {
+        mock_token_balance(&e, &id)
+    }
+
+    pub fn transfer(e: Env, from: Address, to: Address, amount: i128) {
+        let from_balance = mock_token_balance(&e, &from);
+        assert!(from_balance >= amount, "insufficient balance");
+        let to_balance = mock_token_balance(&e, &to);
+        mock_token_set_balance(&e, &from, from_balance - amount);
+        mock_token_set_balance(&e, &to, to_balance + amount);
+    }
+}
+
+fn mock_token_balance(e: &Env, id: &Address) -> i128 {
+    e.storage()
+        .persistent()
+        .get(&MockTokenDataKey::Balance(id.clone()))
+        .unwrap_or(0)
+}
+
+fn mock_token_set_balance(e: &Env, id: &Address, amount: i128) {
+    e.storage()
+        .persistent()
+        .set(&MockTokenDataKey::Balance(id.clone()), &amount);
+}
+
+fn create_stellar_asset(e: &Env, _admin: &Address) -> Address {
+    e.register(MockToken, ())
+}
+
+fn mint_stellar_asset(e: &Env, token: &Address, to: &Address, amount: i128) {
+    e.as_contract(token, || {
+        let current = mock_token_balance(e, to);
+        let next = current.checked_add(amount).expect("mint overflow");
+        mock_token_set_balance(e, to, next);
+    });
+}
+
 /// Verifies that the contract can only be initialized once.
 #[test]
 fn test_initialization_is_one_time() {
@@ -29,19 +94,13 @@ fn test_initialization_is_one_time() {
     let client = VaultContractClient::new(&e, &contract_id);
 
     let admin = Address::generate(&e);
-    let deposit_token = Address::generate(&e);
-    let reward_token = Address::generate(&e);
+    let deposit_token = create_stellar_asset(&e, &admin);
+    let reward_token = create_stellar_asset(&e, &admin);
     let vesting_period = 86400u64; // 1 day
 
-    client.initialize(
-        &admin,
-        &deposit_token,
-        &reward_token,
-        &vesting_period,
-        &0,
-        &soroban_sdk::Vec::new(&e),
-    );
+    client.initialize(&admin, &deposit_token, &reward_token, &vesting_period);
 
+    let result = client.try_initialize(&admin, &deposit_token, &reward_token, &vesting_period);
     let result = client.try_initialize(
         &admin,
         &deposit_token,
@@ -63,10 +122,11 @@ fn test_initialize_requires_admin_auth() {
     let client = VaultContractClient::new(&e, &contract_id);
 
     let admin = Address::generate(&e);
-    let deposit_token = Address::generate(&e);
-    let reward_token = Address::generate(&e);
+    let deposit_token = create_stellar_asset(&e, &admin);
+    let reward_token = create_stellar_asset(&e, &admin);
     let vesting_period = 86400u64;
 
+    let result = client.try_initialize(&admin, &deposit_token, &reward_token, &vesting_period);
     let result = client.try_initialize(
         &admin,
         &deposit_token,
@@ -92,6 +152,7 @@ fn test_initialize_fails_with_same_tokens() {
     let token = Address::generate(&e);
     let vesting_period = 86400u64;
 
+    let result = client.try_initialize(&admin, &token, &token, &vesting_period);
     let result = client.try_initialize(
         &admin,
         &token,
@@ -114,21 +175,16 @@ fn test_vesting() {
     let client = VaultContractClient::new(&e, &contract_id);
 
     let admin = Address::generate(&e);
-    let deposit_token = Address::generate(&e);
-    let reward_token = Address::generate(&e);
+    let deposit_token = create_stellar_asset(&e, &admin);
+    let reward_token = create_stellar_asset(&e, &admin);
     let vesting_period = 86400u64; // 1 day in seconds
 
-    client.initialize(
-        &admin,
-        &deposit_token,
-        &reward_token,
-        &vesting_period,
-        &0,
-        &soroban_sdk::Vec::new(&e),
-    );
+    client.initialize(&admin, &deposit_token, &reward_token, &vesting_period);
 
     let user = Address::generate(&e);
 
+    mint_stellar_asset(&e, &deposit_token, &user, 1000);
+    mint_stellar_asset(&e, &reward_token, &admin, 200000);
     // Set up mock token clients
     let _deposit_token_client = token::Client::new(&e, &deposit_token);
     let _reward_token_client = token::Client::new(&e, &reward_token);
@@ -332,8 +388,8 @@ fn test_add_asset() {
     let client = VaultContractClient::new(&e, &contract_id);
 
     let admin = Address::generate(&e);
-    let deposit_token = Address::generate(&e);
-    let reward_token = Address::generate(&e);
+    let deposit_token = create_stellar_asset(&e, &admin);
+    let reward_token = create_stellar_asset(&e, &admin);
     let vesting_period = 86400u64;
 
     client.initialize(&admin, &deposit_token, &reward_token, &vesting_period, &0, &soroban_sdk::Vec::new(&e));
@@ -363,14 +419,16 @@ fn test_multiple_asset_deposits() {
 
     client.initialize(&admin, &deposit_token, &reward_token, &vesting_period, &0, &soroban_sdk::Vec::new(&e));
 
-    let asset1 = Address::generate(&e);
-    let asset2 = Address::generate(&e);
+    let asset1 = create_stellar_asset(&e, &admin);
+    let asset2 = create_stellar_asset(&e, &admin);
     let user = Address::generate(&e);
 
     // Add assets
     client.add_asset(&admin, &asset1);
     client.add_asset(&admin, &asset2);
 
+    mint_stellar_asset(&e, &asset1, &user, 1000);
+    mint_stellar_asset(&e, &asset2, &user, 2000);
     // Mock token balances
     e.as_contract(&asset1, || {
         e.storage().instance().set(
@@ -418,20 +476,22 @@ fn test_multiple_asset_withdrawals() {
     let client = VaultContractClient::new(&e, &contract_id);
 
     let admin = Address::generate(&e);
-    let deposit_token = Address::generate(&e);
-    let reward_token = Address::generate(&e);
+    let deposit_token = create_stellar_asset(&e, &admin);
+    let reward_token = create_stellar_asset(&e, &admin);
     let vesting_period = 86400u64;
 
     client.initialize(&admin, &deposit_token, &reward_token, &vesting_period, &0, &soroban_sdk::Vec::new(&e));
 
-    let asset1 = Address::generate(&e);
-    let asset2 = Address::generate(&e);
+    let asset1 = create_stellar_asset(&e, &admin);
+    let asset2 = create_stellar_asset(&e, &admin);
     let user = Address::generate(&e);
 
     // Add assets
     client.add_asset(&admin, &asset1);
     client.add_asset(&admin, &asset2);
 
+    mint_stellar_asset(&e, &asset1, &user, 1000);
+    mint_stellar_asset(&e, &asset2, &user, 2000);
     // Mock token balances
     e.as_contract(&asset1, || {
         e.storage().instance().set(
@@ -483,19 +543,22 @@ fn test_asset_reward_distribution() {
     let client = VaultContractClient::new(&e, &contract_id);
 
     let admin = Address::generate(&e);
-    let deposit_token = Address::generate(&e);
-    let reward_token = Address::generate(&e);
+    let deposit_token = create_stellar_asset(&e, &admin);
+    let reward_token = create_stellar_asset(&e, &admin);
     let vesting_period = 86400u64;
 
     client.initialize(&admin, &deposit_token, &reward_token, &vesting_period, &0, &soroban_sdk::Vec::new(&e));
 
-    let asset1 = Address::generate(&e);
+    let asset1 = create_stellar_asset(&e, &admin);
     let user1 = Address::generate(&e);
     let user2 = Address::generate(&e);
 
     // Add asset
     client.add_asset(&admin, &asset1);
 
+    mint_stellar_asset(&e, &asset1, &user1, 1000);
+    mint_stellar_asset(&e, &asset1, &user2, 2000);
+    mint_stellar_asset(&e, &reward_token, &admin, 1_000_000);
     // Mock token balances
     e.as_contract(&asset1, || {
         e.storage().instance().set(
@@ -562,6 +625,8 @@ fn test_asset_reward_claiming() {
     // Add asset
     client.add_asset(&admin, &asset1);
 
+    mint_stellar_asset(&e, &asset1, &user, 1000);
+    mint_stellar_asset(&e, &reward_token, &admin, 1_000_000);
     // Mock token balances
     e.as_contract(&asset1, || {
         e.storage().instance().set(
@@ -599,6 +664,173 @@ fn test_asset_reward_claiming() {
     assert_eq!(pending, 0);
 }
 
+#[test]
+fn test_locked_positions_unlock_after_expiration() {
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let contract_id = e.register_contract(None, VaultContract {});
+    let client = VaultContractClient::new(&e, &contract_id);
+
+    let admin = Address::generate(&e);
+    let deposit_token = create_stellar_asset(&e, &admin);
+    let reward_token = create_stellar_asset(&e, &admin);
+    let vesting_period = 0_u64;
+
+    client.initialize(&admin, &deposit_token, &reward_token, &vesting_period);
+
+    let user = Address::generate(&e);
+    mint_stellar_asset(&e, &deposit_token, &user, 1_000);
+
+    client.deposit(&user, &1_000i128);
+    client.lock(&user, &400i128, &604_800u64);
+
+    assert_eq!(client.liquid_balance(&user), 600);
+    assert_eq!(client.locked_balance(&user), 400);
+    assert_eq!(client.weighted_total_deposits(), 10_400_000);
+
+    e.ledger().set_timestamp(604_799);
+    assert_eq!(client.unlock_expired(&user, &10), 0);
+    assert_eq!(client.liquid_balance(&user), 600);
+    assert_eq!(client.locked_balance(&user), 400);
+
+    e.ledger().set_timestamp(604_801);
+    assert_eq!(client.unlock_expired(&user, &10), 400);
+    assert_eq!(client.liquid_balance(&user), 1_000);
+    assert_eq!(client.locked_balance(&user), 0);
+    assert_eq!(client.weighted_total_deposits(), 10_000_000);
+}
+
+#[test]
+fn test_withdraw_auto_unlocks_expired_funds() {
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let contract_id = e.register_contract(None, VaultContract {});
+    let client = VaultContractClient::new(&e, &contract_id);
+
+    let admin = Address::generate(&e);
+    let deposit_token = create_stellar_asset(&e, &admin);
+    let reward_token = create_stellar_asset(&e, &admin);
+    let vesting_period = 0_u64;
+
+    client.initialize(&admin, &deposit_token, &reward_token, &vesting_period);
+
+    let user = Address::generate(&e);
+    mint_stellar_asset(&e, &deposit_token, &user, 1_000);
+
+    client.deposit(&user, &1_000i128);
+    client.lock(&user, &400i128, &604_800u64);
+
+    e.ledger().set_timestamp(604_801);
+
+    client.withdraw(&user, &800i128);
+
+    assert_eq!(client.liquid_balance(&user), 200);
+    assert_eq!(client.locked_balance(&user), 0);
+    assert_eq!(client.weighted_total_deposits(), 2_000_000);
+}
+
+#[test]
+fn test_lock_multiplier_changes_reward_split() {
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let contract_id = e.register_contract(None, VaultContract {});
+    let client = VaultContractClient::new(&e, &contract_id);
+
+    let admin = Address::generate(&e);
+    let deposit_token = create_stellar_asset(&e, &admin);
+    let reward_token = create_stellar_asset(&e, &admin);
+    let vesting_period = 0_u64;
+
+    client.initialize(&admin, &deposit_token, &reward_token, &vesting_period);
+
+    let locked_user = Address::generate(&e);
+    let liquid_user = Address::generate(&e);
+    mint_stellar_asset(&e, &deposit_token, &locked_user, 1_000);
+    mint_stellar_asset(&e, &deposit_token, &liquid_user, 1_000);
+    mint_stellar_asset(&e, &reward_token, &admin, 2_100_000);
+
+    client.deposit(&locked_user, &1_000i128);
+    client.deposit(&liquid_user, &1_000i128);
+    client.lock(&locked_user, &1_000i128, &604_800u64);
+
+    assert_eq!(client.weighted_total_deposits(), 21_000_000);
+
+    e.ledger().set_timestamp(1_000);
+    client.distribute_rewards(&2_100_000i128);
+
+    assert_eq!(client.pending_rewards(&locked_user), 1_100_000);
+    assert_eq!(client.pending_rewards(&liquid_user), 1_000_000);
+
+    assert_eq!(client.claim_rewards(&locked_user), 1_100_000);
+    assert_eq!(client.claim_rewards(&liquid_user), 1_000_000);
+}
+
+#[test]
+fn test_lock_rejects_invalid_duration() {
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let contract_id = e.register_contract(None, VaultContract {});
+    let client = VaultContractClient::new(&e, &contract_id);
+
+    let admin = Address::generate(&e);
+    let deposit_token = create_stellar_asset(&e, &admin);
+    let reward_token = create_stellar_asset(&e, &admin);
+    let vesting_period = 0_u64;
+
+    client.initialize(&admin, &deposit_token, &reward_token, &vesting_period);
+
+    let user = Address::generate(&e);
+    mint_stellar_asset(&e, &deposit_token, &user, 1_000);
+
+    client.deposit(&user, &1_000i128);
+
+    let unsupported = client.try_lock(&user, &100i128, &1_u64);
+    assert_eq!(unsupported, Err(Ok(VaultError::UnsupportedLockDuration)));
+
+    let invalid_duration = client.try_lock(&user, &100i128, &0_u64);
+    assert_eq!(invalid_duration, Err(Ok(VaultError::InvalidLockDuration)));
+}
+
+#[test]
+fn test_admin_can_update_lock_duration_models() {
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let contract_id = e.register_contract(None, VaultContract {});
+    let client = VaultContractClient::new(&e, &contract_id);
+
+    let admin = Address::generate(&e);
+    let deposit_token = create_stellar_asset(&e, &admin);
+    let reward_token = create_stellar_asset(&e, &admin);
+    let vesting_period = 0_u64;
+
+    client.initialize(&admin, &deposit_token, &reward_token, &vesting_period);
+
+    let mut models = soroban_sdk::Vec::new(&e);
+    models.push_back(super::storage::LockDurationModel {
+        duration_seconds: 2 * 24 * 60 * 60,
+        reward_multiplier_bps: 13_000,
+    });
+    models.push_back(super::storage::LockDurationModel {
+        duration_seconds: 4 * 24 * 60 * 60,
+        reward_multiplier_bps: 16_000,
+    });
+
+    client.set_lock_duration_models(&admin, &models);
+
+    let user = Address::generate(&e);
+    mint_stellar_asset(&e, &deposit_token, &user, 1_000);
+
+    client.deposit(&user, &1_000i128);
+    client.lock(&user, &1_000i128, &(2 * 24 * 60 * 60));
+
+    assert_eq!(client.weighted_total_deposits(), 13_000_000);
+}
+
 /// Tests independent tracking of balances per asset.
 #[test]
 fn test_independent_asset_tracking() {
@@ -609,20 +841,23 @@ fn test_independent_asset_tracking() {
     let client = VaultContractClient::new(&e, &contract_id);
 
     let admin = Address::generate(&e);
-    let deposit_token = Address::generate(&e);
-    let reward_token = Address::generate(&e);
+    let deposit_token = create_stellar_asset(&e, &admin);
+    let reward_token = create_stellar_asset(&e, &admin);
     let vesting_period = 0u64;
 
     client.initialize(&admin, &deposit_token, &reward_token, &vesting_period, &0, &soroban_sdk::Vec::new(&e));
 
-    let asset1 = Address::generate(&e);
-    let asset2 = Address::generate(&e);
+    let asset1 = create_stellar_asset(&e, &admin);
+    let asset2 = create_stellar_asset(&e, &admin);
     let user = Address::generate(&e);
 
     // Add assets
     client.add_asset(&admin, &asset1);
     client.add_asset(&admin, &asset2);
 
+    mint_stellar_asset(&e, &asset1, &user, 10_000);
+    mint_stellar_asset(&e, &asset2, &user, 10_000);
+    mint_stellar_asset(&e, &reward_token, &admin, 2_000_000);
     // Mock token balances
     e.as_contract(&asset1, || {
         e.storage().instance().set(
@@ -739,19 +974,16 @@ fn test_event_topic_standard() {
     let user = Address::generate(&e);
     let vesting_period = 86400u64;
 
-    client.initialize(
-        &admin,
-        &deposit_token,
-        &reward_token,
-        &vesting_period,
-        &0,
-        &soroban_sdk::Vec::new(&e),
-    );
+    client.initialize(&admin, &deposit_token, &reward_token, &vesting_period);
 
     // Verify initialize event topics
     let events_snapshot = e.events().all();
     let last = events_snapshot.last().unwrap();
     assert_eq!(last.1.len(), 2, "Initialize must have 2 topics");
+    let topic0: soroban_sdk::Symbol = last.1.get(0).unwrap().try_into_val(&e).unwrap();
+    let topic1: soroban_sdk::Symbol = last.1.get(1).unwrap().try_into_val(&e).unwrap();
+    assert_eq!(topic0, axionvera_events::PROTOCOL);
+    assert_eq!(topic1, axionvera_events::ACT_INIT);
     assert_eq!(
         last.1.get(0).unwrap().clone().to_xdr(&e),
         axionvera_events::PROTOCOL.to_xdr(&e),
@@ -787,6 +1019,9 @@ fn test_deposit_event_indexing() {
     let user = Address::generate(&e);
     let vesting_period = 86400u64;
 
+    client.initialize(&admin, &deposit_token, &reward_token, &vesting_period);
+
+    mint_stellar_asset(&e, &deposit_token, &user, 1000);
     client.initialize(
         &admin,
         &deposit_token,
@@ -823,7 +1058,10 @@ fn test_deposit_event_indexing() {
         assert_eq!(log.get(0).unwrap().action, axionvera_events::ACT_DEPOSIT);
 
         let global_log = axionvera_core::get_global_event_log(&e);
-        assert!(!global_log.is_empty(), "Global event log should not be empty");
+        assert!(
+            !global_log.is_empty(),
+            "Global event log should not be empty"
+        );
 
         let users = axionvera_core::get_interacting_users(&e);
         assert_eq!(users.len(), 1, "Should have one interacting user");
@@ -851,31 +1089,23 @@ fn test_pause_unpause_events() {
     let client = VaultContractClient::new(&e, &contract_id);
 
     let admin = Address::generate(&e);
-    let deposit_token = Address::generate(&e);
-    let reward_token = Address::generate(&e);
+    let deposit_token = create_stellar_asset(&e, &admin);
+    let reward_token = create_stellar_asset(&e, &admin);
     let vesting_period = 86400u64;
 
-    client.initialize(
-        &admin,
-        &deposit_token,
-        &reward_token,
-        &vesting_period,
-        &0,
-        &soroban_sdk::Vec::new(&e),
-    );
+    client.initialize(&admin, &deposit_token, &reward_token, &vesting_period);
 
     let prev_event_count = e.events().all().len();
 
     client.pause_contract();
     let pause_events = e.events().all();
     let new_count = pause_events.len();
-    assert!(
-        new_count > prev_event_count,
-        "Pause should emit an event"
-    );
+    assert!(new_count > prev_event_count, "Pause should emit an event");
 
     let pause_event = pause_events.get(new_count - 1).unwrap();
     assert_eq!(pause_event.1.len(), 2, "Pause must have 2 topics");
+    let pause_topic: soroban_sdk::Symbol = pause_event.1.get(1).unwrap().try_into_val(&e).unwrap();
+    assert_eq!(pause_topic, axionvera_events::ACT_PAUSE);
     assert_eq!(
         pause_event.1.get(1).unwrap().clone().to_xdr(&e),
         axionvera_events::ACT_PAUSE.to_xdr(&e),
@@ -885,6 +1115,9 @@ fn test_pause_unpause_events() {
     let all_events = e.events().all();
     let unpause_event = all_events.get(all_events.len() - 1).unwrap();
     assert_eq!(unpause_event.1.len(), 2, "Unpause must have 2 topics");
+    let unpause_topic: soroban_sdk::Symbol =
+        unpause_event.1.get(1).unwrap().try_into_val(&e).unwrap();
+    assert_eq!(unpause_topic, axionvera_events::ACT_UNPAUSE);
     assert_eq!(
         unpause_event.1.get(1).unwrap().clone().to_xdr(&e),
         axionvera_events::ACT_UNPAUSE.to_xdr(&e),
@@ -916,6 +1149,10 @@ fn test_event_version_field() {
     let user = Address::generate(&e);
     let vesting_period = 0u64; // No vesting for this test
 
+    client.initialize(&admin, &deposit_token, &reward_token, &vesting_period);
+
+    mint_stellar_asset(&e, &deposit_token, &user, 1000);
+    mint_stellar_asset(&e, &reward_token, &admin, 200_000);
     client.initialize(
         &admin,
         &deposit_token,
@@ -1189,7 +1426,7 @@ fn test_delegated_withdraw() {
     client.initialize(&admin, &deposit_token, &reward_token, &0u64, &0, &soroban_sdk::Vec::new(&e));
 
     // Grant WITHDRAW permission
-    client.delegate(&vault_owner, &operator, &storage::PERMISSION_DEPOSIT | storage::PERMISSION_WITHDRAW, &0u64);
+    client.delegate(&vault_owner, &operator, storage::PERMISSION_DEPOSIT | storage::PERMISSION_WITHDRAW, 0u64);
 
     // Set up mock token balances
     e.as_contract(&deposit_token, || {
@@ -1242,7 +1479,7 @@ fn test_delegated_claim_rewards() {
     client.initialize(&admin, &deposit_token, &reward_token, &0u64, &0, &soroban_sdk::Vec::new(&e));
 
     // Grant CLAIM permission
-    client.delegate(&vault_owner, &operator, &storage::PERMISSION_CLAIM | storage::PERMISSION_DEPOSIT, &0u64);
+    client.delegate(&vault_owner, &operator, storage::PERMISSION_CLAIM | storage::PERMISSION_DEPOSIT, 0u64);
 
     // Set up mock token balances
     e.as_contract(&deposit_token, || {
@@ -1340,10 +1577,10 @@ fn test_delegation_events() {
 
     let events = e.events().all();
     let delegate_event = events.get(events.len() - 1).unwrap();
-    assert_eq!(delegate_event.0.len(), 2, "Delegate must have 2 topics");
+    assert_eq!(delegate_event.1.len(), 2, "Delegate must have 2 topics");
     assert_eq!(
-        delegate_event.0.get(1).unwrap(),
-        soroban_sdk::xdr::ToXdr::to_xdr(&axionvera_events::ACT_DELEGATE, &e),
+        delegate_event.1.get(1).unwrap(),
+        axionvera_events::ACT_DELEGATE.into_val(&e),
     );
 
     // Revoke and check event
@@ -1351,8 +1588,8 @@ fn test_delegation_events() {
     let events = e.events().all();
     let revoke_event = events.get(events.len() - 1).unwrap();
     assert_eq!(
-        revoke_event.0.get(1).unwrap(),
-        soroban_sdk::xdr::ToXdr::to_xdr(&axionvera_events::ACT_REVOKE_DELEGATION, &e),
+        revoke_event.1.get(1).unwrap(),
+        axionvera_events::ACT_REVOKE_DELEGATION.into_val(&e),
     );
 }
 

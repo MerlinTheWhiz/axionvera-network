@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::signing::SignerConfig;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -178,7 +178,14 @@ impl NetworkConfig {
         let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
 
         let node_id = std::env::var("NODE_ID").unwrap_or_else(|_| {
-            format!("node-{}", uuid::Uuid::new_v4().to_string().split('-').next().unwrap_or("unknown"))
+            format!(
+                "node-{}",
+                uuid::Uuid::new_v4()
+                    .to_string()
+                    .split('-')
+                    .next()
+                    .unwrap_or("unknown")
+            )
         });
 
         let tracing_enabled = std::env::var("TRACING_ENABLED")
@@ -186,7 +193,8 @@ impl NetworkConfig {
             .parse()
             .unwrap_or(true);
 
-        let tracing_exporter_str = std::env::var("TRACING_EXPORTER").unwrap_or_else(|_| "otlp".to_string());
+        let tracing_exporter_str =
+            std::env::var("TRACING_EXPORTER").unwrap_or_else(|_| "otlp".to_string());
         let tracing_exporter = match tracing_exporter_str.to_lowercase().as_str() {
             "jaeger" => TracingExporter::Jaeger,
             "xray" => TracingExporter::XRay,
@@ -219,8 +227,8 @@ impl NetworkConfig {
             SorobanConfig::default()
         };
 
-        let vault_contract_address = std::env::var("VAULT_CONTRACT_ADDRESS")
-            .unwrap_or_else(|_| "CCDRM2F5H7...".to_string()); // Placeholder
+        let vault_contract_address =
+            std::env::var("VAULT_CONTRACT_ADDRESS").unwrap_or_else(|_| "CCDRM2F5H7...".to_string()); // Placeholder
 
         let signing_config = if let Ok(kms_key_id) = std::env::var("AWS_KMS_KEY_ID") {
             let region = std::env::var("AWS_REGION").unwrap_or_else(|_| "us-east-1".to_string());
@@ -240,8 +248,10 @@ impl NetworkConfig {
 
         Ok(Self {
             bind_address,
-            grpc_bind_address: std::env::var("GRPC_BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:50051".to_string()),
-            gateway_bind_address: std::env::var("GATEWAY_BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:8081".to_string()),
+            grpc_bind_address: std::env::var("GRPC_BIND_ADDRESS")
+                .unwrap_or_else(|_| "0.0.0.0:50051".to_string()),
+            gateway_bind_address: std::env::var("GATEWAY_BIND_ADDRESS")
+                .unwrap_or_else(|_| "0.0.0.0:8081".to_string()),
             database_url,
             database_config: DatabaseConfig::default(),
             shutdown_grace_period: Duration::from_secs(shutdown_grace_period_secs),
@@ -250,11 +260,18 @@ impl NetworkConfig {
             tls_cert_path: std::env::var("TLS_CERT_PATH").ok(),
             tls_key_path: std::env::var("TLS_KEY_PATH").ok(),
             tls_client_ca_path: std::env::var("TLS_CLIENT_CA_PATH").ok(),
-            tls_require_client_auth: std::env::var("TLS_REQUIRE_CLIENT_AUTH").ok()
+            tls_require_client_auth: std::env::var("TLS_REQUIRE_CLIENT_AUTH")
+                .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(true),
-            enable_gateway: std::env::var("ENABLE_GATEWAY").unwrap_or_else(|_| "true".to_string()).parse().unwrap_or(true),
-            enable_reflection: std::env::var("ENABLE_REFLECTION").unwrap_or_else(|_| "true".to_string()).parse().unwrap_or(true),
+            enable_gateway: std::env::var("ENABLE_GATEWAY")
+                .unwrap_or_else(|_| "true".to_string())
+                .parse()
+                .unwrap_or(true),
+            enable_reflection: std::env::var("ENABLE_REFLECTION")
+                .unwrap_or_else(|_| "true".to_string())
+                .parse()
+                .unwrap_or(true),
             node_id,
             otlp_endpoint: std::env::var("OTLP_ENDPOINT").ok(),
             jaeger_endpoint: std::env::var("JAEGER_ENDPOINT").ok(),

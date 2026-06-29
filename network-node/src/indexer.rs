@@ -120,7 +120,7 @@ impl EventIndexer {
 
                         let protocol = event.topic.get(0).cloned();
                         let action = event.topic.get(1).cloned();
-                        
+
                         // Include event schema version in the JSON payload.
                         // The database stores event_version in the data field
                         // for forward compatibility.
@@ -151,7 +151,9 @@ impl EventIndexer {
                     }
 
                     current_ledger = events_result.latest_ledger + 1;
-                    self.connection_pool.update_last_processed_ledger(current_ledger).await?;
+                    self.connection_pool
+                        .update_last_processed_ledger(current_ledger)
+                        .await?;
                 }
                 Err(e) => {
                     error!(error = %e, "Failed to fetch Soroban events");

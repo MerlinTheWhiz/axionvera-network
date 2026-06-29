@@ -8,6 +8,8 @@ publish = false
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[workspace]
+
 [dependencies]
 soroban-sdk = "22.0.1111"
 axionvera-events = { path = "../events" }

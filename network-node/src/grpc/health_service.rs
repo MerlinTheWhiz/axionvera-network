@@ -1,15 +1,14 @@
 use std::time::SystemTime;
-use tokio::sync::RwLock;
-use tonic::{Request, Response, Status, Streaming};
-use tokio_stream::wrappers::ReceiverStream;
 use tokio::sync::mpsc;
+use tokio::sync::RwLock;
+use tokio_stream::wrappers::ReceiverStream;
+use tonic::{Request, Response, Status, Streaming};
 use tracing::{info, warn};
 
-use crate::grpc::network::{
-    health_service_server::HealthService,
-    HealthCheckResponse, HealthStatus,
-};
 use crate::database::ConnectionPool;
+use crate::grpc::network::{
+    health_service_server::HealthService, HealthCheckResponse, HealthStatus,
+};
 
 pub struct HealthServiceImpl {
     connection_pool: Arc<RwLock<ConnectionPool>>,
@@ -17,9 +16,7 @@ pub struct HealthServiceImpl {
 
 impl HealthServiceImpl {
     pub fn new(connection_pool: Arc<RwLock<ConnectionPool>>) -> Self {
-        Self {
-            connection_pool,
-        }
+        Self { connection_pool }
     }
 
     async fn check_database_health(&self) -> (bool, String) {
@@ -30,14 +27,27 @@ impl HealthServiceImpl {
         }
     }
 
-    async fn check_overall_health(&self) -> (HealthStatus, String, std::collections::HashMap<String, String>) {
+    async fn check_overall_health(
+        &self,
+    ) -> (
+        HealthStatus,
+        String,
+        std::collections::HashMap<String, String>,
+    ) {
         let mut details = std::collections::HashMap::new();
         let mut overall_status = HealthStatus::Serving;
 
         // Check database health
         let (db_healthy, db_message) = self.check_database_health().await;
-        details.insert("database".to_string(), if db_healthy { "healthy".to_string() } else { "unhealthy".to_string() });
-        
+        details.insert(
+            "database".to_string(),
+            if db_healthy {
+                "healthy".to_string()
+            } else {
+                "unhealthy".to_string()
+            },
+        );
+
         if !db_healthy {
             overall_status = HealthStatus::NotServing;
         }
@@ -45,7 +55,7 @@ impl HealthServiceImpl {
         // Check memory usage (mock implementation)
         let memory_usage = "45%".to_string();
         details.insert("memory_usage".to_string(), memory_usage.clone());
-        
+
         // Check CPU usage (mock implementation)
         let cpu_usage = "23%".to_string();
         details.insert("cpu_usage".to_string(), cpu_usage.clone());
@@ -94,23 +104,31 @@ impl HealthService for HealthServiceImpl {
         // Spawn a task to periodically send health updates
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
-            
+
             loop {
                 interval.tick().await;
-                
+
                 let (status, message, details) = {
                     let mut details = std::collections::HashMap::new();
                     let mut overall_status = HealthStatus::Serving;
 
                     // Check database health
                     let pool = connection_pool.read().await;
-                    let (db_healthy, db_message) = pool.health_check().await.unwrap_or_else(|e| {
-                        (false, format!("Database connection failed: {}", e))
-                    });
+                    let (db_healthy, db_message) = pool
+                        .health_check()
+                        .await
+                        .unwrap_or_else(|e| (false, format!("Database connection failed: {}", e)));
                     drop(pool);
-                    
-                    details.insert("database".to_string(), if db_healthy { "healthy".to_string() } else { "unhealthy".to_string() });
-                    
+
+                    details.insert(
+                        "database".to_string(),
+                        if db_healthy {
+                            "healthy".to_string()
+                        } else {
+                            "unhealthy".to_string()
+                        },
+                    );
+
                     if !db_healthy {
                         overall_status = HealthStatus::NotServing;
                     }

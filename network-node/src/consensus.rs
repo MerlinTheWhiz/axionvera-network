@@ -121,7 +121,11 @@ impl ConsensusEngine {
         node_id: String,
         required_votes: usize,
         proposal_ttl_minutes: u64,
-    ) -> (Self, mpsc::UnboundedReceiver<Vote>, mpsc::UnboundedReceiver<Proposal>) {
+    ) -> (
+        Self,
+        mpsc::UnboundedReceiver<Vote>,
+        mpsc::UnboundedReceiver<Proposal>,
+    ) {
         let (vote_sender, vote_receiver) = mpsc::unbounded_channel();
         let (proposal_sender, proposal_receiver) = mpsc::unbounded_channel();
 
@@ -150,8 +154,7 @@ impl ConsensusEngine {
 
         info!(
             "Creating proposal {} with {} required votes",
-            proposal.id,
-            proposal.required_votes
+            proposal.id, proposal.required_votes
         );
 
         // Store proposal
@@ -163,7 +166,10 @@ impl ConsensusEngine {
         // Broadcast proposal
         if let Err(e) = self.proposal_sender.send(proposal.clone()) {
             error!("Failed to broadcast proposal {}: {}", proposal.id, e);
-            return Err(NetworkError::Server(format!("Failed to broadcast proposal: {}", e)));
+            return Err(NetworkError::Server(format!(
+                "Failed to broadcast proposal: {}",
+                e
+            )));
         }
 
         info!("Proposal {} created and broadcasted", proposal.id);
@@ -199,13 +205,19 @@ impl ConsensusEngine {
             Some(p) => p,
             None => {
                 warn!("Proposal {} not found", proposal_id);
-                return Err(NetworkError::Validation(format!("Proposal {} not found", proposal_id)));
+                return Err(NetworkError::Validation(format!(
+                    "Proposal {} not found",
+                    proposal_id
+                )));
             }
         };
 
         if !proposal.can_vote() {
             warn!("Proposal {} is not available for voting", proposal_id);
-            return Err(NetworkError::Validation(format!("Proposal {} is not active", proposal_id)));
+            return Err(NetworkError::Validation(format!(
+                "Proposal {} is not active",
+                proposal_id
+            )));
         }
 
         // Check if already voted
@@ -214,7 +226,10 @@ impl ConsensusEngine {
             if let Some(proposal_votes) = votes.get(proposal_id) {
                 if proposal_votes.iter().any(|v| v.voter == self.node_id) {
                     warn!("Already voted on proposal: {}", proposal_id);
-                    return Err(NetworkError::Validation(format!("Already voted on proposal {}", proposal_id)));
+                    return Err(NetworkError::Validation(format!(
+                        "Already voted on proposal {}",
+                        proposal_id
+                    )));
                 }
             }
         }
@@ -230,7 +245,9 @@ impl ConsensusEngine {
         // Store vote
         {
             let mut votes = self.votes.write().await;
-            let proposal_votes = votes.entry(proposal_id.to_string()).or_insert_with(Vec::new);
+            let proposal_votes = votes
+                .entry(proposal_id.to_string())
+                .or_insert_with(Vec::new);
             proposal_votes.push(vote.clone());
         }
 
@@ -239,7 +256,7 @@ impl ConsensusEngine {
             let mut proposals = self.proposals.write().await;
             if let Some(proposal) = proposals.get_mut(proposal_id) {
                 proposal.current_votes += 1;
-                
+
                 // Check if quorum is reached
                 if proposal.has_quorum() {
                     self.finalize_proposal(proposal_id).await?;
@@ -249,8 +266,14 @@ impl ConsensusEngine {
 
         // Broadcast vote
         if let Err(e) = self.vote_sender.send(vote) {
-            error!("Failed to broadcast vote for proposal {}: {}", proposal_id, e);
-            return Err(NetworkError::Server(format!("Failed to broadcast vote: {}", e)));
+            error!(
+                "Failed to broadcast vote for proposal {}: {}",
+                proposal_id, e
+            );
+            return Err(NetworkError::Server(format!(
+                "Failed to broadcast vote: {}",
+                e
+            )));
         }
 
         info!("Vote cast successfully on proposal: {}", proposal_id);
@@ -260,7 +283,10 @@ impl ConsensusEngine {
     /// Process incoming vote from another node
     #[instrument(skip(self, vote), fields(node_id = %self.node_id, proposal_id = %vote.proposal_id, voter = %vote.voter))]
     pub async fn process_vote(&self, vote: Vote) -> Result<()> {
-        info!("Processing vote from {} for proposal: {}", vote.voter, vote.proposal_id);
+        info!(
+            "Processing vote from {} for proposal: {}",
+            vote.voter, vote.proposal_id
+        );
 
         // Extract trace context if present
         if let Some(trace_context) = &vote.trace_context {
@@ -278,13 +304,19 @@ impl ConsensusEngine {
             Some(p) => p,
             None => {
                 warn!("Received vote for unknown proposal: {}", vote.proposal_id);
-                return Err(NetworkError::Validation(format!("Unknown proposal: {}", vote.proposal_id)));
+                return Err(NetworkError::Validation(format!(
+                    "Unknown proposal: {}",
+                    vote.proposal_id
+                )));
             }
         };
 
         if !proposal.can_vote() {
             warn!("Received vote for inactive proposal: {}", vote.proposal_id);
-            return Err(NetworkError::Validation(format!("Proposal {} is not active", vote.proposal_id)));
+            return Err(NetworkError::Validation(format!(
+                "Proposal {} is not active",
+                vote.proposal_id
+            )));
         }
 
         // Check for duplicate vote
@@ -292,8 +324,14 @@ impl ConsensusEngine {
             let votes = self.votes.read().await;
             if let Some(proposal_votes) = votes.get(&vote.proposal_id) {
                 if proposal_votes.iter().any(|v| v.voter == vote.voter) {
-                    warn!("Duplicate vote received from {} for proposal: {}", vote.voter, vote.proposal_id);
-                    return Err(NetworkError::Validation(format!("Duplicate vote from {}", vote.voter)));
+                    warn!(
+                        "Duplicate vote received from {} for proposal: {}",
+                        vote.voter, vote.proposal_id
+                    );
+                    return Err(NetworkError::Validation(format!(
+                        "Duplicate vote from {}",
+                        vote.voter
+                    )));
                 }
             }
         }
@@ -301,7 +339,9 @@ impl ConsensusEngine {
         // Store vote
         {
             let mut votes = self.votes.write().await;
-            let proposal_votes = votes.entry(vote.proposal_id.clone()).or_insert_with(Vec::new);
+            let proposal_votes = votes
+                .entry(vote.proposal_id.clone())
+                .or_insert_with(Vec::new);
             proposal_votes.push(vote.clone());
         }
 
@@ -310,7 +350,7 @@ impl ConsensusEngine {
             let mut proposals = self.proposals.write().await;
             if let Some(proposal) = proposals.get_mut(&vote.proposal_id) {
                 proposal.current_votes += 1;
-                
+
                 // Check if quorum is reached
                 if proposal.has_quorum() {
                     self.finalize_proposal(&vote.proposal_id).await?;
@@ -318,14 +358,20 @@ impl ConsensusEngine {
             }
         }
 
-        info!("Vote processed successfully for proposal: {}", vote.proposal_id);
+        info!(
+            "Vote processed successfully for proposal: {}",
+            vote.proposal_id
+        );
         Ok(())
     }
 
     /// Process incoming proposal from another node
     #[instrument(skip(self, proposal), fields(node_id = %self.node_id, proposal_id = %proposal.id, proposer = %proposal.proposer))]
     pub async fn process_proposal(&self, proposal: Proposal) -> Result<()> {
-        info!("Processing proposal from {}: {}", proposal.proposer, proposal.id);
+        info!(
+            "Processing proposal from {}: {}",
+            proposal.proposer, proposal.id
+        );
 
         // Extract trace context if present
         // In a real implementation, you would handle trace context propagation here
@@ -357,12 +403,13 @@ impl ConsensusEngine {
         let (proposal, votes) = {
             let proposals = self.proposals.read().await;
             let votes = self.votes.read().await;
-            
-            let proposal = proposals.get(proposal_id).cloned()
-                .ok_or_else(|| NetworkError::Validation(format!("Proposal {} not found", proposal_id)))?;
-            
+
+            let proposal = proposals.get(proposal_id).cloned().ok_or_else(|| {
+                NetworkError::Validation(format!("Proposal {} not found", proposal_id))
+            })?;
+
             let proposal_votes = votes.get(proposal_id).cloned().unwrap_or_default();
-            
+
             (proposal, proposal_votes)
         };
 
@@ -465,9 +512,18 @@ impl ConsensusEngine {
 
         let total_proposals = proposals.len();
         let active_proposals = proposals.values().filter(|p| p.can_vote()).count();
-        let approved_proposals = proposals.values().filter(|p| matches!(p.status, ProposalStatus::Approved)).count();
-        let rejected_proposals = proposals.values().filter(|p| matches!(p.status, ProposalStatus::Rejected)).count();
-        let expired_proposals = proposals.values().filter(|p| matches!(p.status, ProposalStatus::Expired)).count();
+        let approved_proposals = proposals
+            .values()
+            .filter(|p| matches!(p.status, ProposalStatus::Approved))
+            .count();
+        let rejected_proposals = proposals
+            .values()
+            .filter(|p| matches!(p.status, ProposalStatus::Rejected))
+            .count();
+        let expired_proposals = proposals
+            .values()
+            .filter(|p| matches!(p.status, ProposalStatus::Expired))
+            .count();
 
         let total_votes: usize = votes.values().map(|v| v.len()).sum();
 
@@ -490,28 +546,30 @@ impl ConsensusEngine {
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-            
+
             loop {
                 interval.tick().await;
-                
+
                 let span = tracing::info_span!(
                     "consensus_maintenance",
                     node_id = %node_id,
                     timestamp = %chrono::Utc::now()
                 );
                 let _enter = span.enter();
-                
+
                 // Clean up expired proposals
                 let expired_count = {
                     let proposals = proposals.read().await;
                     let mut expired = Vec::new();
-                    
+
                     for (id, proposal) in proposals.iter() {
-                        if proposal.is_expired() && matches!(proposal.status, ProposalStatus::Active) {
+                        if proposal.is_expired()
+                            && matches!(proposal.status, ProposalStatus::Active)
+                        {
                             expired.push(id.clone());
                         }
                     }
-                    
+
                     if !expired.is_empty() {
                         let mut proposals = proposals.write().await;
                         for id in &expired {
@@ -521,10 +579,10 @@ impl ConsensusEngine {
                             }
                         }
                     }
-                    
+
                     expired.len()
                 };
-                
+
                 if expired_count > 0 {
                     info!("Maintenance: {} proposals expired", expired_count);
                 }

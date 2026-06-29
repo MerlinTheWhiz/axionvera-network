@@ -128,11 +128,74 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "LockDurationModels"
                               "symbol": "PenaltyRateBps"
                             }
                           ]
                         },
                         "val": {
+                          "vec": [
+                            {
+                              "map": [
+                                {
+                                  "key": {
+                                    "symbol": "duration_seconds"
+                                  },
+                                  "val": {
+                                    "u64": 604800
+                                  }
+                                },
+                                {
+                                  "key": {
+                                    "symbol": "reward_multiplier_bps"
+                                  },
+                                  "val": {
+                                    "u32": 11000
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "map": [
+                                {
+                                  "key": {
+                                    "symbol": "duration_seconds"
+                                  },
+                                  "val": {
+                                    "u64": 2592000
+                                  }
+                                },
+                                {
+                                  "key": {
+                                    "symbol": "reward_multiplier_bps"
+                                  },
+                                  "val": {
+                                    "u32": 12500
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "map": [
+                                {
+                                  "key": {
+                                    "symbol": "duration_seconds"
+                                  },
+                                  "val": {
+                                    "u64": 7776000
+                                  }
+                                },
+                                {
+                                  "key": {
+                                    "symbol": "reward_multiplier_bps"
+                                  },
+                                  "val": {
+                                    "u32": 15000
+                                  }
+                                }
+                              ]
+                            }
+                          ]
                           "u32": 0
                         }
                       },
@@ -209,11 +272,13 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "UtilizationMultipliers"
                               "symbol": "TotalPenalties"
                             }
                           ]
                         },
                         "val": {
+                          "vec": []
                           "i128": {
                             "hi": 0,
                             "lo": 0
@@ -224,11 +289,13 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "VestingPeriod"
                               "symbol": "UtilizationMultipliers"
                             }
                           ]
                         },
                         "val": {
+                          "u64": 86400
                           "vec": []
                         }
                       },
@@ -236,11 +303,16 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "WeightedTotalDeposits"
                               "symbol": "VestingPeriod"
                             }
                           ]
                         },
                         "val": {
+                          "i128": {
+                            "hi": 0,
+                            "lo": 0
+                          }
                           "u64": 86400
                         }
                       }

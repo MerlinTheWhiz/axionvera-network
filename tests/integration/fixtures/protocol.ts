@@ -1,8 +1,12 @@
 import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
 import path from "path";
+import { fileURLToPath } from "url";
 
-export const PROTO_PATH = path.resolve(__dirname, "../../proto/network.proto");
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+export const PROTO_PATH = path.resolve(__dirname, "../../../proto/network.proto");
 
 export const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
   keepCase: true,

@@ -9,4 +9,5 @@ publish = false
 crate-type = ["lib"]
 
 [dependencies]
-soroban-sdk = "22.0.1111"
+soroban-sdk = "22.0.0"
+axionvera-interfaces = { path = "../interfaces" }

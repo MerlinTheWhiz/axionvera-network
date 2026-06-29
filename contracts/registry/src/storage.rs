@@ -1,5 +1,7 @@
 use soroban_sdk::{contracttype, Address, Env, Symbol, Vec};
 
+use crate::types::ContractInfo;
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
@@ -8,6 +10,10 @@ pub enum DataKey {
     ModuleAddress(Symbol),
     ModuleStatus(Address),
     AllModules,
+    /// Full metadata for an indexed contract, keyed by address.
+    ContractInfo(Address),
+    /// All indexed contract addresses in insertion order.
+    AllContracts,
 }
 
 pub fn is_initialized(e: &Env) -> bool {
@@ -76,4 +82,43 @@ pub fn has_module_address(e: &Env, address: &Address) -> bool {
     e.storage()
         .persistent()
         .has(&DataKey::ModuleStatus(address.clone()))
+}
+
+// ---------------------------------------------------------------------------
+// ContractInfo index
+// ---------------------------------------------------------------------------
+
+pub fn get_contract_info(e: &Env, address: &Address) -> Option<ContractInfo> {
+    e.storage()
+        .persistent()
+        .get(&DataKey::ContractInfo(address.clone()))
+}
+
+pub fn set_contract_info(e: &Env, address: &Address, info: &ContractInfo) {
+    e.storage()
+        .persistent()
+        .set(&DataKey::ContractInfo(address.clone()), info);
+}
+
+pub fn has_contract(e: &Env, address: &Address) -> bool {
+    e.storage()
+        .persistent()
+        .has(&DataKey::ContractInfo(address.clone()))
+}
+
+pub fn get_all_contracts(e: &Env) -> Vec<Address> {
+    e.storage()
+        .persistent()
+        .get(&DataKey::AllContracts)
+        .unwrap_or_else(|| Vec::new(e))
+}
+
+pub fn add_to_all_contracts(e: &Env, address: &Address) {
+    let mut contracts = get_all_contracts(e);
+    if !contracts.contains(address) {
+        contracts.push_back(address.clone());
+        e.storage()
+            .persistent()
+            .set(&DataKey::AllContracts, &contracts);
+    }
 }

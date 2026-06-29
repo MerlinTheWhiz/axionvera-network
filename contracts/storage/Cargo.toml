@@ -11,4 +11,9 @@ crate-type = ["lib"]
 [dependencies]
 soroban-sdk = "22.0.111"
 axionvera-events = { path = "../events" }
+axionvera-interfaces = { path = "../interfaces" }
+axionvera-state = { path = "../state" }
+
+[dev-dependencies]
+soroban-sdk = { version = "22.0.0", features = ["testutils"] }
 axionvera-state = { path = "../state" }
