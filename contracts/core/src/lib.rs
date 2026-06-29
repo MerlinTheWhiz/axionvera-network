@@ -1,8 +1,15 @@
 #![no_std]
 
-use soroban_sdk::{contracttype, Address, Env, Map, Vec};
+use soroban_sdk::{contracttype, Address, Env, Map, Symbol, Vec};
 
 use axionvera_events as events;
+use axionvera_state::{
+    GovernanceState, RewardState, StateError, StakingState, TreasuryState, VaultState,
+};
+use axionvera_storage::{
+    get_governance_state, get_reward_state, get_staking_state, get_treasury_state, get_vault_state,
+    set_governance_state, set_reward_state, set_staking_state, set_treasury_state, set_vault_state,
+};
 
 /// Maximum number of event log entries stored per user index.
 const MAX_EVENTS_PER_USER: u32 = 50;
@@ -113,4 +120,79 @@ pub fn get_interacting_users(e: &Env) -> Vec<Address> {
         .get(&events::DataKey::InteractingUsers)
         .unwrap_or_else(|| Map::new(e));
     users.keys()
+}
+
+// ===========================================================================
+// STATE MACHINE CORE INTEGRATION FACADE
+// ===========================================================================
+
+/// Transition Vault state
+pub fn transition_vault_state(
+    e: &Env,
+    new_state: VaultState,
+    caller: Address,
+) -> Result<VaultState, StateError> {
+    set_vault_state(e, new_state, caller)
+}
+
+/// Get current Vault state
+pub fn current_vault_state(e: &Env) -> VaultState {
+    get_vault_state(e)
+}
+
+/// Transition Staking state
+pub fn transition_staking_state(
+    e: &Env,
+    new_state: StakingState,
+    caller: Address,
+) -> Result<StakingState, StateError> {
+    set_staking_state(e, new_state, caller)
+}
+
+/// Get current Staking state
+pub fn current_staking_state(e: &Env) -> StakingState {
+    get_staking_state(e)
+}
+
+/// Transition Reward state
+pub fn transition_reward_state(
+    e: &Env,
+    new_state: RewardState,
+    caller: Address,
+) -> Result<RewardState, StateError> {
+    set_reward_state(e, new_state, caller)
+}
+
+/// Get current Reward state
+pub fn current_reward_state(e: &Env) -> RewardState {
+    get_reward_state(e)
+}
+
+/// Transition Treasury state
+pub fn transition_treasury_state(
+    e: &Env,
+    new_state: TreasuryState,
+    caller: Address,
+) -> Result<TreasuryState, StateError> {
+    set_treasury_state(e, new_state, caller)
+}
+
+/// Get current Treasury state
+pub fn current_treasury_state(e: &Env) -> TreasuryState {
+    get_treasury_state(e)
+}
+
+/// Transition Governance state
+pub fn transition_governance_state(
+    e: &Env,
+    proposal_id: Symbol,
+    new_state: GovernanceState,
+    caller: Address,
+) -> Result<GovernanceState, StateError> {
+    set_governance_state(e, proposal_id, new_state, caller)
+}
+
+/// Get current Governance state
+pub fn current_governance_state(e: &Env, proposal_id: Symbol) -> GovernanceState {
+    get_governance_state(e, proposal_id)
 }
