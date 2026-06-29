@@ -291,7 +291,7 @@ Events are stored in the `events` table with the following columns:
 | `ledger_sequence` | INTEGER | Stellar ledger number |
 | `contract_id` | TEXT | Contract address |
 | `event_type` | TEXT | Event type |
-| `protocol` | TEXT | Protocol identifier (always "AxionVault") |
+| `protocol` | TEXT | Protocol identifier (always "AxVault") |
 | `action` | TEXT | Action type (e.g., "deposit", "withdraw") |
 | `user_address` | TEXT | User address (if applicable) |
 | `asset_address` | TEXT | Asset address (if applicable) |

@@ -477,7 +477,7 @@ The contract emits standardized Soroban events for all state-changing actions. E
 
 All vault events use a **two-topic design** for efficient filtering:
 
-- **Topic 1 (Protocol Identifier)**: `Symbol("AxionVault")` — Identifies the protocol namespace
+- **Topic 1 (Protocol Identifier)**: `Symbol("AxVault")` — Identifies the protocol namespace
 - **Topic 2 (Action)**: Identifies the specific action (e.g., `Symbol("Deposit")`, `Symbol("Withdraw")`)
 - **Data Payload**: Structured tuple containing event-specific data (user_address, amount, timestamp)
 
@@ -492,7 +492,7 @@ This design allows indexers to rapidly filter by:
 
 **Topics:**
 
-- Topic 1: `Symbol("AxionVault")`
+- Topic 1: `Symbol("AxVault")`
 - Topic 2: `Symbol("Initialize")`
 
 **Data Payload (XDR Struct):**
@@ -512,7 +512,7 @@ struct InitializeEvent {
 
 **Topics:**
 
-- Topic 1: `Symbol("AxionVault")`
+- Topic 1: `Symbol("AxVault")`
 - Topic 2: `Symbol("Deposit")`
 
 **Data Payload (XDR Struct):**
@@ -531,7 +531,7 @@ struct DepositEvent {
 
 **Topics:**
 
-- Topic 1: `Symbol("AxionVault")`
+- Topic 1: `Symbol("AxVault")`
 - Topic 2: `Symbol("Withdraw")`
 
 **Data Payload (XDR Struct):**
@@ -550,7 +550,7 @@ struct WithdrawEvent {
 
 **Topics:**
 
-- Topic 1: `Symbol("AxionVault")`
+- Topic 1: `Symbol("AxVault")`
 - Topic 2: `Symbol("Distribute")`
 
 **Data Payload (XDR Struct):**
@@ -569,7 +569,7 @@ struct DistributeEvent {
 
 **Topics:**
 
-- Topic 1: `Symbol("AxionVault")`
+- Topic 1: `Symbol("AxVault")`
 - Topic 2: `Symbol("Claim")`
 
 **Data Payload (XDR Struct):**
@@ -588,7 +588,7 @@ struct ClaimEvent {
 
 Off-chain indexers should:
 
-1. **Subscribe to events with Topic 1 = `Symbol("AxionVault")`** to catch all vault events
+1. **Subscribe to events with Topic 1 = `Symbol("AxVault")`** to catch all vault events
 2. **Filter by Topic 2** to identify specific actions (Initialize, Deposit, Withdraw, Distribute, Claim)
 3. **Parse the data payload** to extract user_address, amount, and timestamp
 4. **Build the user dashboard** by aggregating Deposit, Withdraw, Distribute, and Claim events chronologically
@@ -600,7 +600,7 @@ Each event data payload is serialized as a Soroban ContractData XDR type. The in
 Example (pseudocode):
 
 ```
-event.topics[0] == Symbol("AxionVault")
+event.topics[0] == Symbol("AxVault")
 event.topics[1] == Symbol("Deposit")
 data = deserialize_xdr(event.data) as DepositEvent
 // data.user_address, data.amount, data.timestamp are now available

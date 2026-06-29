@@ -62,7 +62,7 @@ describe('Event Standards', () => {
     it('protocol identifier should be consistent across all events', () => {
       const actions = Object.values(EVENT_ACTIONS);
       for (const action of actions) {
-        expect(PROTOCOL).toBe('AxionVault');
+        expect(PROTOCOL).toBe('AxVault');
         expect(action).toBeDefined();
         expect(action.length).toBeGreaterThan(0);
       }

@@ -115,7 +115,7 @@ impl EventIndexer {
                         info!(
                             event_id = %event.id,
                             ledger = event.ledger,
-                            "Processing AxionVault Soroban event"
+                            "Processing AxVault Soroban event"
                         );
 
                         let protocol = event.topic.get(0).cloned();
