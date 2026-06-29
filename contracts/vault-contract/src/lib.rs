@@ -8,9 +8,7 @@ pub mod storage;
 #[cfg(test)]
 mod test;
 
-
-
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env};
 
 use axionvera_accounting as accounting;
 
@@ -140,7 +138,7 @@ impl VaultContract {
                 amount,
             )?;
 
-            let (_state, _position) = storage::store_deposit(&e, &from, amount)?;
+            let (state, _position) = storage::store_deposit(&e, &from, amount)?;
             account_operation(
                 &e,
                 accounting::AccountingCategory::Vault,
@@ -157,7 +155,12 @@ impl VaultContract {
         })
     }
 
-    pub fn authorize_delegate(e: Env, owner: Address, delegate: Address, permissions: u32) -> Result<(), VaultError> {
+    pub fn authorize_delegate(
+        e: Env,
+        owner: Address,
+        delegate: Address,
+        permissions: u32,
+    ) -> Result<(), VaultError> {
         storage::require_initialized(&e)?;
         owner.require_auth();
         if permissions == 0 {
@@ -178,7 +181,12 @@ impl VaultContract {
         Ok(())
     }
 
-    pub fn deposit_as_delegate(e: Env, owner: Address, delegate: Address, amount: i128) -> Result<(), VaultError> {
+    pub fn deposit_as_delegate(
+        e: Env,
+        owner: Address,
+        delegate: Address,
+        amount: i128,
+    ) -> Result<(), VaultError> {
         storage::require_not_paused(&e)?;
         storage::require_initialized(&e)?;
         validate_positive_amount(amount)?;
@@ -198,7 +206,12 @@ impl VaultContract {
 
             let (_state, _position) = storage::store_deposit(&e, &owner, amount)?;
             events::emit_deposit(&e, owner.clone(), amount);
-            events::emit_delegate_action(&e, owner.clone(), delegate.clone(), symbol_short!("deposit"));
+            events::emit_delegate_action(
+                &e,
+                owner.clone(),
+                delegate.clone(),
+                symbol_short!("deposit"),
+            );
             Ok(())
         })
     }
@@ -227,7 +240,7 @@ impl VaultContract {
 
             CrossContractClient::token_transfer(
                 &e,
-                &deposit_token,
+                &state.deposit_token,
                 &e.current_contract_address(),
                 &to,
                 amount,
@@ -256,7 +269,12 @@ impl VaultContract {
             let (state, position) = storage::store_withdraw(&e, &owner, amount)?;
 
             events::emit_withdraw(&e, owner.clone(), amount, position.balance);
-            events::emit_delegate_action(&e, owner.clone(), delegate.clone(), symbol_short!("withdraw"));
+            events::emit_delegate_action(
+                &e,
+                owner.clone(),
+                delegate.clone(),
+                symbol_short!("withdraw"),
+            );
 
             CrossContractClient::token_transfer(
                 &e,
@@ -455,7 +473,12 @@ impl VaultContract {
             )?;
 
             events::emit_claim_rewards(&e, owner.clone(), amt);
-            events::emit_delegate_action(&e, owner.clone(), delegate.clone(), symbol_short!("claim"));
+            events::emit_delegate_action(
+                &e,
+                owner.clone(),
+                delegate.clone(),
+                symbol_short!("claim"),
+            );
             Ok(amt)
         })
     }
@@ -480,7 +503,11 @@ impl VaultContract {
         storage::get_reward_index(&e)
     }
 
-    pub fn delegate_permissions(e: Env, owner: Address, delegate: Address) -> Result<u32, VaultError> {
+    pub fn delegate_permissions(
+        e: Env,
+        owner: Address,
+        delegate: Address,
+    ) -> Result<u32, VaultError> {
         storage::get_delegate_permissions(&e, &owner, &delegate)
     }
 
@@ -932,7 +959,11 @@ impl VaultContract {
     }
 
     /// Revoke a previously granted delegation.
-    pub fn revoke_delegation(e: Env, delegator: Address, operator: Address) -> Result<(), VaultError> {
+    pub fn revoke_delegation(
+        e: Env,
+        delegator: Address,
+        operator: Address,
+    ) -> Result<(), VaultError> {
         storage::require_initialized(&e)?;
         delegator.require_auth();
 
@@ -942,7 +973,11 @@ impl VaultContract {
     }
 
     /// Query a specific delegation entry.
-    pub fn get_delegation(e: Env, delegator: Address, operator: Address) -> Option<storage::Delegation> {
+    pub fn get_delegation(
+        e: Env,
+        delegator: Address,
+        operator: Address,
+    ) -> Option<storage::Delegation> {
         storage::get_delegation(&e, &delegator, &operator)
     }
 

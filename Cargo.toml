@@ -9,11 +9,19 @@ members = [
   "contracts/core",
   "contracts/interfaces",
   "contracts/orchestrator",
+  "contracts/rewards",
   "network-node",
   "tests/auth",
   "tests/security",
 ]
 
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
+soroban-sdk = "22.0.0"
 
 [profile.release]
 opt-level = "z"

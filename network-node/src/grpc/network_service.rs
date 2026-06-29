@@ -392,16 +392,22 @@ impl NetworkService for NetworkServiceImpl {
             }
         }
 
-        let tx_id = {
+        let (tx_id, execution_event) = {
             let mut chain = self.chain_parameters.write().await;
-            chain
+            let tx_id = chain
                 .submit_parameter_upgrade(
                     core_patch,
                     req.activation_epoch_height,
                     &req.proposer_address,
                     &req.dao_voter_addresses,
                 )
-                .map_err(|e| Status::permission_denied(e))?
+                .map_err(|e| Status::permission_denied(e))?;
+            let execution_event = chain
+                .execution_events()
+                .into_iter()
+                .rev()
+                .find(|event| event.transaction_id == tx_id);
+            (tx_id, execution_event)
         };
 
         let timestamp = SystemTime::now()
@@ -414,6 +420,15 @@ impl NetworkService for NetworkServiceImpl {
             req.activation_epoch_height.to_string(),
         );
         events.insert("tx_type".to_string(), "PARAMETER_UPGRADE".to_string());
+        events.insert("execution_status".to_string(), "executed".to_string());
+        if let Some(event) = execution_event {
+            events.insert("proposal_id".to_string(), event.proposal_id);
+            events.insert("executor_address".to_string(), event.executor_address);
+            events.insert(
+                "executed_at_height".to_string(),
+                event.executed_at_height.to_string(),
+            );
+        }
 
         Ok(Response::new(TransactionResponse {
             success: true,
