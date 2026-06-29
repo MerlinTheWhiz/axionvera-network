@@ -2,14 +2,14 @@ use soroban_sdk::{Address, BytesN, Env};
 
 use axionvera_core;
 use axionvera_events::{
-    self,
-    AdminTransferAcceptedEvent, AdminTransferProposedEvent, AssetAddedEvent, AssetClaimEvent,
+    self, AdminTransferAcceptedEvent, AdminTransferProposedEvent, AssetAddedEvent, AssetClaimEvent,
     AssetDepositEvent, AssetDistributeEvent, AssetWithdrawEvent, ClaimEvent, DepositEvent,
     DistributeEvent, InitializeEvent, LockEvent, PauseEvent, UnlockEvent, UnpauseEvent,
-    UpgradeEvent, WithdrawEvent, EVENT_VERSION, PROTOCOL, ACT_INIT, ACT_DEPOSIT, ACT_WITHDRAW,
-    ACT_DISTRIBUTE, ACT_CLAIM, ACT_LOCK, ACT_UNLOCK, ACT_ADMIN_PROPOSED, ACT_ADMIN_ACCEPTED,
-    ACT_UPGRADE, ACT_PAUSE, ACT_UNPAUSE, ACT_ASSET_ADDED, ACT_ASSET_DEPOSIT, ACT_ASSET_WITHDRAW,
-    ACT_ASSET_DISTRIBUTE, ACT_ASSET_CLAIM,
+    UpgradeEvent, WithdrawEvent, EVENT_VERSION,
+    PROTOCOL, ACT_ADMIN_ACCEPTED, ACT_ADMIN_PROPOSED, ACT_ASSET_ADDED, ACT_ASSET_CLAIM,
+    ACT_ASSET_DEPOSIT, ACT_ASSET_DISTRIBUTE, ACT_ASSET_WITHDRAW, ACT_CLAIM, ACT_DELEGATE,
+    ACT_DELEGATED_ACTION, ACT_DEPOSIT, ACT_DISTRIBUTE, ACT_INIT, ACT_LOCK, ACT_PAUSE,
+    ACT_REVOKE_DELEGATION, ACT_UNLOCK, ACT_UNPAUSE, ACT_UPGRADE, ACT_WITHDRAW,
 };
 
 pub fn emit_initialize(e: &Env, admin: Address, deposit_token: Address, reward_token: Address) {
@@ -138,6 +138,61 @@ pub fn emit_admin_transfer_accepted(e: &Env, previous_admin: Address, new_admin:
     );
 }
 
+pub fn emit_delegate(
+    e: &Env,
+    delegator: Address,
+    operator: Address,
+    permissions: u32,
+    expires_at: u64,
+) {
+    let ts = axionvera_events::ledger_timestamp(e);
+    e.events().publish(
+        (PROTOCOL, ACT_DELEGATE),
+        axionvera_events::DelegateEvent {
+            event_version: EVENT_VERSION,
+            delegator,
+            operator,
+            permissions,
+            expires_at,
+            timestamp: ts,
+        },
+    );
+}
+
+pub fn emit_revoke_delegation(e: &Env, delegator: Address, operator: Address) {
+    let ts = axionvera_events::ledger_timestamp(e);
+    e.events().publish(
+        (PROTOCOL, ACT_REVOKE_DELEGATION),
+        axionvera_events::RevokeDelegationEvent {
+            event_version: EVENT_VERSION,
+            delegator,
+            operator,
+            timestamp: ts,
+        },
+    );
+}
+
+pub fn emit_delegated_action(
+    e: &Env,
+    delegator: Address,
+    operator: Address,
+    permission: u32,
+    action: soroban_sdk::Symbol,
+) {
+    let ts = axionvera_events::ledger_timestamp(e);
+    e.events().publish(
+        (PROTOCOL, ACT_DELEGATED_ACTION),
+        axionvera_events::DelegatedActionEvent {
+            event_version: EVENT_VERSION,
+            delegator,
+            operator,
+            permission,
+            action,
+            timestamp: ts,
+        },
+    );
+}
+
 pub fn emit_upgrade(e: &Env, admin: Address, new_wasm_hash: BytesN<32>) {
     let ts = axionvera_events::ledger_timestamp(e);
     e.events().publish(
@@ -245,4 +300,48 @@ pub fn emit_asset_claim_rewards(e: &Env, user: Address, asset: Address, amount: 
         },
     );
     axionvera_core::index_event(e, ACT_ASSET_CLAIM, Some(user.clone()), Some(asset), amount);
+}
+
+pub fn emit_delegate_authorized(e: &Env, owner: Address, delegate: Address, permissions: u32) {
+    let ts = axionvera_events::ledger_timestamp(e);
+    e.events().publish(
+        (PROTOCOL, ACT_DELEGATE_AUTH),
+        DelegateAuthorizedEvent {
+            event_version: EVENT_VERSION,
+            owner: owner.clone(),
+            delegate: delegate.clone(),
+            permissions,
+            timestamp: ts,
+        },
+    );
+    axionvera_core::index_event(e, ACT_DELEGATE_AUTH, Some(owner), Some(delegate), permissions as i128);
+}
+
+pub fn emit_delegate_revoked(e: &Env, owner: Address, delegate: Address) {
+    let ts = axionvera_events::ledger_timestamp(e);
+    e.events().publish(
+        (PROTOCOL, ACT_DELEGATE_REVOKE),
+        DelegateRevokedEvent {
+            event_version: EVENT_VERSION,
+            owner: owner.clone(),
+            delegate: delegate.clone(),
+            timestamp: ts,
+        },
+    );
+    axionvera_core::index_event(e, ACT_DELEGATE_REVOKE, Some(owner), Some(delegate), 0);
+}
+
+pub fn emit_delegate_action(e: &Env, owner: Address, delegate: Address, action: soroban_sdk::Symbol) {
+    let ts = axionvera_events::ledger_timestamp(e);
+    e.events().publish(
+        (PROTOCOL, ACT_DELEGATE_ACTION),
+        DelegateActionEvent {
+            event_version: EVENT_VERSION,
+            owner: owner.clone(),
+            delegate: delegate.clone(),
+            action,
+            timestamp: ts,
+        },
+    );
+    axionvera_core::index_event(e, ACT_DELEGATE_ACTION, Some(owner), Some(delegate), 1);
 }

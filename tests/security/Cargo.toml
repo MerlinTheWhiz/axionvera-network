@@ -1,0 +1,12 @@
+[package]
+name = "axionvera-security-tests"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+axionvera-auth = { path = "../../contracts/auth" }
+axionvera-security = { path = "../../contracts/security" }
+axionvera-vault-contract = { path = "../../contracts/vault-contract" }
+soroban-sdk = { version = "22.0.0", features = ["testutils"] }

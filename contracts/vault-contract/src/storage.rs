@@ -1,7 +1,8 @@
 use soroban_sdk::{contracttype, Address, Env, Map};
 
 use crate::errors::{
-    ArithmeticError, AuthorizationError, BalanceError, StateError, ValidationError, VaultError,
+    ArithmeticError, AuthorizationError, BalanceError, DelegationError, StateError, ValidationError,
+    VaultError,
 };
 
 pub const PRECISION_FACTOR: i128 = 1_000_000_000;
@@ -63,10 +64,6 @@ pub enum DataKey {
     ReentrancyGuard,
     /// Pause flag
     IsPaused,
-    /// User liquid balance (unlocked deposits)
-    UserLiquidBalance(Address),
-    /// User lock entries
-    UserLocks(Address),
     /// User balance (legacy, kept for backwards compatibility)
     UserBalance(Address),
     /// User's last synced reward index (legacy, kept for backwards compatibility)
@@ -75,10 +72,6 @@ pub enum DataKey {
     UserAccruedRewards(Address),
     /// User's last reward distribution timestamp (legacy, kept for backwards compatibility)
     UserLastRewardTimestamp(Address),
-    /// User's liquid balance (available for immediate withdrawal)
-    UserLiquidBalance(Address),
-    /// User's active lock entries
-    UserLocks(Address),
     /// Penalty rate in basis points for early withdrawals
     PenaltyRateBps,
     /// Total penalty amount collected by the vault
@@ -99,6 +92,15 @@ pub enum DataKey {
     UserAssetAccruedRewards(Address, Address), // (user, asset)
     /// User's last reward distribution timestamp per asset
     UserAssetLastRewardTimestamp(Address, Address), // (user, asset)
+    // -----------------------------------------------------------------------
+    // Delegation keys
+    // -----------------------------------------------------------------------
+    /// Delegation entry: (delegator, operator) -> Delegation
+    Delegation(Address, Address),
+    /// List of operator addresses for a delegator
+    DelegationOperators(Address),
+    /// Maximum number of delegations allowed per user
+    MaxDelegationsPerUser,
 }
 
 /// The global state of the vault contract.
@@ -141,34 +143,59 @@ pub struct UserPosition {
     pub last_reward_timestamp: u64,
 }
 
-/// A single time-locked deposit entry.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Lock {
-    /// The amount locked in this entry.
-    pub amount: i128,
-    /// The earliest timestamp when these funds may be unlocked without penalty.
-    pub unlock_timestamp: u64,
-    /// A placeholder for future locked-reward multiplier support.
-    pub reward_multiplier: u32,
-}
-
-/// A reward multiplier entry used to compute dynamic reward curves.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MultiplierPoint {
-    /// Utilization threshold in basis points.
-    pub utilization_bps: u32,
-    /// Reward multiplier in basis points.
-    pub multiplier_bps: u32,
-}
-
 /// Snapshot of a user's position across multiple assets.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MultiAssetPosition {
     /// Map of asset address to user position
     pub positions: Map<Address, UserPosition>,
+}
+
+// ---------------------------------------------------------------------------
+// Delegation permissions (bitmask)
+// ---------------------------------------------------------------------------
+
+/// Permission to deposit on behalf of the delegator.
+pub const PERMISSION_DEPOSIT: u32 = 1 << 0;
+/// Permission to withdraw from the delegator's balance.
+pub const PERMISSION_WITHDRAW: u32 = 1 << 1;
+/// Permission to lock the delegator's funds.
+pub const PERMISSION_LOCK: u32 = 1 << 2;
+/// Permission to unlock the delegator's expired locks.
+pub const PERMISSION_UNLOCK: u32 = 1 << 3;
+/// Permission to claim rewards on behalf of the delegator.
+pub const PERMISSION_CLAIM: u32 = 1 << 4;
+
+/// All user-action permissions combined.
+pub const PERMISSION_ALL_USER: u32 = PERMISSION_DEPOSIT
+    | PERMISSION_WITHDRAW
+    | PERMISSION_LOCK
+    | PERMISSION_UNLOCK
+    | PERMISSION_CLAIM;
+
+/// Default maximum number of delegations per user.
+pub const DEFAULT_MAX_DELEGATIONS: u32 = 20;
+
+/// A delegation entry granting an operator specific permissions on a vault owner's positions.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Delegation {
+    /// The operator address that is authorized to act.
+    pub operator: Address,
+    /// Bitmask of allowed permissions (see PERMISSION_* constants).
+    pub permissions: u32,
+    /// Timestamp after which the delegation expires (0 = never).
+    pub expires_at: u64,
+}
+
+// ---------------------------------------------------------------------------
+// Helper struct for returning delegation info in view functions.
+// ---------------------------------------------------------------------------
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DelegationInfo {
+    pub operator: Address,
+    pub permissions: u32,
+    pub expires_at: u64,
 }
 
 /// A helper struct for returning reward information in view functions.
@@ -325,7 +352,14 @@ pub fn get_state(e: &Env) -> Result<VaultState, VaultError> {
 }
 
 pub fn get_admin(e: &Env) -> Result<Address, VaultError> {
-    Ok(get_state(e)?.admin)
+    require_initialized(e)?;
+    let admin = e
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(StateError::InvalidState)?;
+    bump_instance_ttl(e);
+    Ok(admin)
 }
 
 pub fn set_admin(e: &Env, admin: &Address) {
@@ -353,15 +387,36 @@ pub fn clear_pending_admin(e: &Env) {
 }
 
 pub fn get_deposit_token(e: &Env) -> Result<Address, VaultError> {
-    Ok(get_state(e)?.deposit_token)
+    require_initialized(e)?;
+    let deposit_token = e
+        .storage()
+        .instance()
+        .get(&DataKey::DepositToken)
+        .ok_or(StateError::InvalidState)?;
+    bump_instance_ttl(e);
+    Ok(deposit_token)
 }
 
 pub fn get_reward_token(e: &Env) -> Result<Address, VaultError> {
-    Ok(get_state(e)?.reward_token)
+    require_initialized(e)?;
+    let reward_token = e
+        .storage()
+        .instance()
+        .get(&DataKey::RewardToken)
+        .ok_or(StateError::InvalidState)?;
+    bump_instance_ttl(e);
+    Ok(reward_token)
 }
 
 pub fn get_total_deposits(e: &Env) -> Result<i128, VaultError> {
-    Ok(get_state(e)?.total_deposits)
+    require_initialized(e)?;
+    let total = e
+        .storage()
+        .instance()
+        .get(&DataKey::TotalDeposits)
+        .unwrap_or(0_i128);
+    bump_instance_ttl(e);
+    Ok(total)
 }
 
 pub fn set_total_deposits(e: &Env, total: i128) {
@@ -370,7 +425,14 @@ pub fn set_total_deposits(e: &Env, total: i128) {
 }
 
 pub fn get_reward_index(e: &Env) -> Result<i128, VaultError> {
-    Ok(get_state(e)?.reward_index)
+    require_initialized(e)?;
+    let index = e
+        .storage()
+        .instance()
+        .get(&DataKey::RewardIndex)
+        .unwrap_or(0_i128);
+    bump_instance_ttl(e);
+    Ok(index)
 }
 
 pub fn set_reward_index(e: &Env, index: i128) {
@@ -379,7 +441,14 @@ pub fn set_reward_index(e: &Env, index: i128) {
 }
 
 pub fn get_vesting_period(e: &Env) -> Result<u64, VaultError> {
-    Ok(get_state(e)?.vesting_period)
+    require_initialized(e)?;
+    let period = e
+        .storage()
+        .instance()
+        .get(&DataKey::VestingPeriod)
+        .unwrap_or(0_u64);
+    bump_instance_ttl(e);
+    Ok(period)
 }
 
 pub fn set_paused(e: &Env, paused: bool) {
@@ -410,6 +479,61 @@ pub fn get_penalty_rate_bps(e: &Env) -> Result<u32, VaultError> {
         .unwrap_or(0_u32);
     bump_instance_ttl(e);
     Ok(rate)
+}
+
+pub fn authorize_delegate(e: &Env, owner: &Address, delegate: &Address, permissions: u32) -> Result<(), VaultError> {
+    require_initialized(e)?;
+    let record = DelegateAuthorization {
+        owner: owner.clone(),
+        delegate: delegate.clone(),
+        permissions,
+        created_at: e.ledger().timestamp(),
+        active: true,
+    };
+    e.storage().instance().set(&DataKey::DelegatePermissions(owner.clone(), delegate.clone()), &record);
+    bump_instance_ttl(e);
+    Ok(())
+}
+
+pub fn revoke_delegate(e: &Env, owner: &Address, delegate: &Address) -> Result<(), VaultError> {
+    require_initialized(e)?;
+    e.storage().instance().remove(&DataKey::DelegatePermissions(owner.clone(), delegate.clone()));
+    bump_instance_ttl(e);
+    Ok(())
+}
+
+pub fn get_delegate_permissions(e: &Env, owner: &Address, delegate: &Address) -> Result<u32, VaultError> {
+    require_initialized(e)?;
+    let record = e
+        .storage()
+        .instance()
+        .get::<_, DelegateAuthorization>(&DataKey::DelegatePermissions(owner.clone(), delegate.clone()));
+    match record {
+        Some(auth) if auth.active => {
+            bump_instance_ttl(e);
+            Ok(auth.permissions)
+        }
+        _ => {
+            bump_instance_ttl(e);
+            Ok(0)
+        }
+    }
+}
+
+pub fn require_delegate_permission(
+    e: &Env,
+    owner: &Address,
+    delegate: &Address,
+    permission: u32,
+) -> Result<(), VaultError> {
+    let record = e
+        .storage()
+        .instance()
+        .get::<_, DelegateAuthorization>(&DataKey::DelegatePermissions(owner.clone(), delegate.clone()));
+    match record {
+        Some(auth) if auth.active && (auth.permissions & permission) != 0 => Ok(()),
+        _ => Err(AuthorizationError::Unauthorized.into()),
+    }
 }
 
 pub fn set_penalty_rate_bps(e: &Env, rate_bps: u32) {
@@ -1426,7 +1550,7 @@ pub fn store_asset_claimable_rewards(
         return Err(ValidationError::InvalidAddress.into());
     }
 
-    let state = get_state(e)?;
+    let vesting_period = get_vesting_period(e)?;
     let mut position = get_user_asset_position_unchecked(e, user, asset);
     let asset_reward_index = get_asset_reward_index(e, asset)?;
 
@@ -1435,7 +1559,7 @@ pub fn store_asset_claimable_rewards(
 
     // Calculate vested rewards
     let current_timestamp = e.ledger().timestamp();
-    let vested = calculate_vested_rewards(current_timestamp, &position, state.vesting_period)?;
+    let vested = calculate_vested_rewards(current_timestamp, &position, vesting_period)?;
 
     // Update position with remaining accrued rewards
     position.accrued_rewards = position
@@ -1459,7 +1583,7 @@ pub fn preview_user_asset_rewards(
         return Err(ValidationError::InvalidAddress.into());
     }
 
-    let state = get_state(e)?;
+    let vesting_period = get_vesting_period(e)?;
     let mut position = get_user_asset_position_unchecked(e, user, asset);
     let asset_reward_index = get_asset_reward_index(e, asset)?;
 
@@ -1467,7 +1591,7 @@ pub fn preview_user_asset_rewards(
     accrue_asset_position_rewards(e, asset_reward_index, &mut position)?;
 
     let current_timestamp = e.ledger().timestamp();
-    let vested = calculate_vested_rewards(current_timestamp, &position, state.vesting_period)?;
+    let vested = calculate_vested_rewards(current_timestamp, &position, vesting_period)?;
 
     Ok(UserRewardSnapshot {
         reward_index: position.reward_index,
@@ -1519,5 +1643,149 @@ fn accrue_asset_position_rewards(
     }
 
     position.reward_index = asset_reward_index;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Delegation Storage
+// ---------------------------------------------------------------------------
+
+/// Get or create the maximum delegations per user setting.
+pub fn get_max_delegations(e: &Env) -> u32 {
+    e.storage()
+        .instance()
+        .get(&DataKey::MaxDelegationsPerUser)
+        .unwrap_or(DEFAULT_MAX_DELEGATIONS)
+}
+
+/// Set the maximum delegations per user (admin function).
+pub fn set_max_delegations(e: &Env, max: u32) {
+    e.storage()
+        .instance()
+        .set(&DataKey::MaxDelegationsPerUser, &max);
+    bump_instance_ttl(e);
+}
+
+/// Get the delegation entry for a (delegator, operator) pair.
+pub fn get_delegation(e: &Env, delegator: &Address, operator: &Address) -> Option<Delegation> {
+    let key = DataKey::Delegation(delegator.clone(), operator.clone());
+    let result = e.storage().persistent().get::<_, Delegation>(&key);
+    if result.is_some() {
+        bump_persistent_ttl(e, &key);
+    }
+    result
+}
+
+/// Store or update a delegation entry.
+pub fn set_delegation(
+    e: &Env,
+    delegator: &Address,
+    operator: &Address,
+    permissions: u32,
+    expires_at: u64,
+) {
+    let key = DataKey::Delegation(delegator.clone(), operator.clone());
+    e.storage().persistent().set(
+        &key,
+        &Delegation {
+            operator: operator.clone(),
+            permissions,
+            expires_at,
+        },
+    );
+    bump_persistent_ttl(e, &key);
+
+    // Ensure the operator appears in the delegator's operator list.
+    let mut operators = get_delegation_operators(e, delegator);
+    if !operators.contains(operator.clone()) {
+        operators.push_back(operator.clone());
+        e.storage()
+            .persistent()
+            .set(&DataKey::DelegationOperators(delegator.clone()), &operators);
+        bump_persistent_ttl(e, &DataKey::DelegationOperators(delegator.clone()));
+    }
+}
+
+/// Remove a delegation entry and clean up the operator list.
+pub fn remove_delegation(e: &Env, delegator: &Address, operator: &Address) {
+    let key = DataKey::Delegation(delegator.clone(), operator.clone());
+    e.storage().persistent().remove(&key);
+
+    // Remove operator from the delegator's operator list.
+    let mut operators = get_delegation_operators(e, delegator);
+    if let Some(pos) = operators.first_index_of(operator.clone()) {
+        operators.remove(pos as u32);
+    }
+    if operators.is_empty() {
+        e.storage()
+            .persistent()
+            .remove(&DataKey::DelegationOperators(delegator.clone()));
+    } else {
+        e.storage()
+            .persistent()
+            .set(&DataKey::DelegationOperators(delegator.clone()), &operators);
+        bump_persistent_ttl(e, &DataKey::DelegationOperators(delegator.clone()));
+    }
+}
+
+/// Get the list of operators a delegator has granted permissions to.
+pub fn get_delegation_operators(e: &Env, delegator: &Address) -> soroban_sdk::Vec<Address> {
+    let key = DataKey::DelegationOperators(delegator.clone());
+    let result = e
+        .storage()
+        .persistent()
+        .get::<_, soroban_sdk::Vec<Address>>(&key)
+        .unwrap_or_else(|| soroban_sdk::Vec::new(e));
+    if !result.is_empty() {
+        bump_persistent_ttl(e, &key);
+    }
+    result
+}
+
+/// Count how many delegations a delegator has.
+pub fn delegation_count(e: &Env, delegator: &Address) -> u32 {
+    get_delegation_operators(e, delegator).len()
+}
+
+/// Check whether an operator has a specific permission for a delegator.
+/// Returns Ok(()) if the delegation exists, is not expired, and includes the permission.
+pub fn check_delegation_permission(
+    e: &Env,
+    delegator: &Address,
+    operator: &Address,
+    permission: u32,
+) -> Result<(), VaultError> {
+    let delegation = get_delegation(e, delegator, operator)
+        .ok_or(DelegationError::NotFound)?;
+
+    // Check expiration.
+    let current_ts = e.ledger().timestamp();
+    if delegation.expires_at != 0 && current_ts >= delegation.expires_at {
+        return Err(DelegationError::Expired.into());
+    }
+
+    // Check the permission bit.
+    if delegation.permissions & permission == 0 {
+        return Err(DelegationError::InsufficientPermissions.into());
+    }
+
+    Ok(())
+}
+
+/// Verify that the operator is authorized to act on behalf of the user.
+/// If `user == operator`, the user's own auth is required.
+/// Otherwise, the operator must have the given permission via a delegation.
+pub fn authorize_for_user(
+    e: &Env,
+    user: &Address,
+    operator: &Address,
+    permission: u32,
+) -> Result<(), VaultError> {
+    if user == operator {
+        user.require_auth();
+    } else {
+        operator.require_auth();
+        check_delegation_permission(e, user, operator, permission)?;
+    }
     Ok(())
 }

@@ -98,6 +98,23 @@ pub enum AuthorizationError {
     OperationLimitExceeded,
 }
 
+/// Specific errors related to delegation.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum DelegationError {
+    /// Thrown when a delegation does not exist.
+    NotFound,
+    /// Thrown when a delegation has expired.
+    Expired,
+    /// Thrown when the operator lacks the required permission.
+    InsufficientPermissions,
+    /// Thrown when the maximum number of delegations per user is exceeded.
+    MaxDelegationsExceeded,
+    /// Thrown when trying to delegate to self.
+    CannotDelegateToSelf,
+    /// Thrown when expires_at is in the past.
+    InvalidExpiration,
+}
+
 /// The primary error type for the Vault contract.
 ///
 /// This enum is exposed to the Soroban runtime and mapped to specific error codes (u32).
@@ -152,6 +169,18 @@ pub enum VaultError {
     CrossContractCallFailed = 23,
     /// Utilization parameters are invalid (e.g., not sorted)
     InvalidUtilizationParameters = 24,
+    /// Delegation not found
+    DelegationNotFound = 25,
+    /// Delegation has expired
+    DelegationExpired = 26,
+    /// Operator lacks required permission for this action
+    InsufficientDelegationPermissions = 27,
+    /// Maximum number of delegations per user exceeded
+    MaxDelegationsExceeded = 28,
+    /// Cannot delegate to self
+    CannotDelegateToSelf = 29,
+    /// Delegation expiration is in the past
+    InvalidDelegationExpiration = 30,
 }
 
 impl VaultError {
@@ -249,6 +278,30 @@ impl VaultError {
                 category: ErrorCategory::Validation,
                 message: "utilization parameters are invalid (e.g., not sorted)",
             },
+            Self::DelegationNotFound => ErrorInfo {
+                category: ErrorCategory::Authorization,
+                message: "delegation not found",
+            },
+            Self::DelegationExpired => ErrorInfo {
+                category: ErrorCategory::Authorization,
+                message: "delegation has expired",
+            },
+            Self::InsufficientDelegationPermissions => ErrorInfo {
+                category: ErrorCategory::Authorization,
+                message: "operator lacks required permission for this action",
+            },
+            Self::MaxDelegationsExceeded => ErrorInfo {
+                category: ErrorCategory::Validation,
+                message: "maximum number of delegations per user exceeded",
+            },
+            Self::CannotDelegateToSelf => ErrorInfo {
+                category: ErrorCategory::Validation,
+                message: "cannot delegate to self",
+            },
+            Self::InvalidDelegationExpiration => ErrorInfo {
+                category: ErrorCategory::Validation,
+                message: "delegation expiration is in the past",
+            },
             Self::CrossContractCallFailed => ErrorInfo {
                 category: ErrorCategory::State,
                 message: "cross-contract call failed",
@@ -298,6 +351,7 @@ impl From<ValidationError> for VaultError {
             ValidationError::InvalidTokenConfiguration => Self::InvalidTokenConfiguration,
             ValidationError::InsufficientRewardAmount => Self::InsufficientRewardAmount,
             ValidationError::InvalidLockDuration => Self::InvalidLockDuration,
+            ValidationError::InvalidPenaltyRate => Self::InvalidPenaltyRate,
             ValidationError::InvalidUtilizationParameters => Self::InvalidUtilizationParameters,
         }
     }
@@ -338,6 +392,19 @@ impl From<VestingError> for VaultError {
     fn from(error: VestingError) -> Self {
         match error {
             VestingError::RewardsNotVested => Self::RewardsNotVested,
+        }
+    }
+}
+
+impl From<DelegationError> for VaultError {
+    fn from(error: DelegationError) -> Self {
+        match error {
+            DelegationError::NotFound => Self::DelegationNotFound,
+            DelegationError::Expired => Self::DelegationExpired,
+            DelegationError::InsufficientPermissions => Self::InsufficientDelegationPermissions,
+            DelegationError::MaxDelegationsExceeded => Self::MaxDelegationsExceeded,
+            DelegationError::CannotDelegateToSelf => Self::CannotDelegateToSelf,
+            DelegationError::InvalidExpiration => Self::InvalidDelegationExpiration,
         }
     }
 }

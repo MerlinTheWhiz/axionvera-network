@@ -866,6 +866,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "axionvera-auth"
+version = "0.1.0"
+
+[[package]]
 name = "axionvera-core"
 version = "0.1.0"
 dependencies = [
@@ -960,7 +964,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "axionvera-registry"
+name = "axionvera-orchestrator"
 version = "0.1.0"
 dependencies = [
  "axionvera-events",
@@ -972,9 +976,11 @@ dependencies = [
 name = "axionvera-vault-contract"
 version = "0.1.0"
 dependencies = [
+ "axionvera-auth",
  "axionvera-core",
  "axionvera-events",
  "axionvera-interfaces",
+ "axionvera-security",
  "axionvera-vault-contract-v2",
  "proptest",
  "soroban-sdk",
@@ -3315,6 +3321,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "lifecycle"
+version = "0.1.0"
+
+[[package]]
 name = "linked-hash-map"
 version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4212,8 +4222,6 @@ dependencies = [
 [[package]]
 name = "proc-macro2"
 version = "1.0.106"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
 ]
@@ -4365,8 +4373,6 @@ dependencies = [
 [[package]]
 name = "quote"
 version = "1.0.45"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41f2619966050689382d2b44f664f4bc593e129785a36d6ee376ddf37259b924"
 dependencies = [
  "proc-macro2 1.0.106",
 ]

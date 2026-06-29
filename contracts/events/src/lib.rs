@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contracttype, symbol_short, Address, BytesN, Env, Symbol};
+use soroban_sdk::{contracttype, symbol_short, Address, Bytes, BytesN, Env, Symbol};
 
 /// Current event schema version.
 pub const EVENT_VERSION: u32 = 1;
@@ -28,8 +28,9 @@ pub const ACT_ASSET_DEPOSIT: Symbol = symbol_short!("asset_dep");
 pub const ACT_ASSET_WITHDRAW: Symbol = symbol_short!("asset_wd");
 pub const ACT_ASSET_DISTRIBUTE: Symbol = symbol_short!("ast_dist");
 pub const ACT_ASSET_CLAIM: Symbol = symbol_short!("asset_clm");
-pub const ACT_MOD_REGISTER: Symbol = symbol_short!("mod_reg");
-pub const ACT_MOD_STATUS_UPDATE: Symbol = symbol_short!("mod_stat");
+pub const ACT_DELEGATE: Symbol = symbol_short!("delegate");
+pub const ACT_REVOKE_DELEGATION: Symbol = symbol_short!("rvk_dlg");
+pub const ACT_DELEGATED_ACTION: Symbol = symbol_short!("deleg_act");
 
 // ---------------------------------------------------------------------------
 // Storage keys used by the indexing layer
@@ -211,19 +212,32 @@ pub struct UnlockEvent {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ModuleRegisteredEvent {
-    pub admin: Address,
-    pub name: Symbol,
-    pub module_address: Address,
+pub struct DelegateEvent {
+    pub event_version: u32,
+    pub delegator: Address,
+    pub operator: Address,
+    pub permissions: u32,
+    pub expires_at: u64,
     pub timestamp: u64,
 }
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ModuleStatusChangedEvent {
-    pub admin: Address,
-    pub module_address: Address,
-    pub is_active: bool,
+pub struct RevokeDelegationEvent {
+    pub event_version: u32,
+    pub delegator: Address,
+    pub operator: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DelegatedActionEvent {
+    pub event_version: u32,
+    pub delegator: Address,
+    pub operator: Address,
+    pub permission: u32,
+    pub action: Symbol,
     pub timestamp: u64,
 }
 
@@ -233,4 +247,231 @@ pub struct ModuleStatusChangedEvent {
 
 pub fn ledger_timestamp(e: &Env) -> u64 {
     e.ledger().timestamp()
+}
+
+// ---------------------------------------------------------------------------
+// Config contract — protocol identifier and action symbols
+// ---------------------------------------------------------------------------
+
+/// Protocol identifier used as Topic 1 for all config contract events.
+pub const PROTOCOL_CONFIG: Symbol = symbol_short!("AxCfg");
+
+pub const ACT_CFG_INIT: Symbol = symbol_short!("cfg_init");
+pub const ACT_CFG_PR_UPD: Symbol = symbol_short!("pr_upd");
+pub const ACT_CFG_VP_UPD: Symbol = symbol_short!("vp_upd");
+pub const ACT_CFG_TD_UPD: Symbol = symbol_short!("td_upd");
+pub const ACT_CFG_MR_UPD: Symbol = symbol_short!("mr_upd");
+pub const ACT_CFG_MU_UPD: Symbol = symbol_short!("mu_upd");
+pub const ACT_CFG_WU_UPD: Symbol = symbol_short!("wu_upd");
+pub const ACT_CFG_MA_UPD: Symbol = symbol_short!("ma_upd");
+pub const ACT_CFG_ADM_P: Symbol = symbol_short!("cfg_adm_p");
+pub const ACT_CFG_ADM_A: Symbol = symbol_short!("cfg_adm_a");
+pub const ACT_CFG_PAUSE: Symbol = symbol_short!("cfg_pause");
+pub const ACT_CFG_UNPAU: Symbol = symbol_short!("cfg_unpau");
+
+// ---------------------------------------------------------------------------
+// Config event payload structs
+// ---------------------------------------------------------------------------
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfigInitializedEvent {
+    pub event_version: u32,
+    pub admin: Address,
+    pub penalty_rate_bps: u32,
+    pub vesting_period: u64,
+    pub target_deposits: i128,
+    pub min_reward_distribution: i128,
+    pub max_unlock_limit: u32,
+    pub withdraw_unlock_limit: u32,
+    pub max_assets: u32,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PenaltyRateUpdatedEvent {
+    pub event_version: u32,
+    pub admin: Address,
+    pub old_rate_bps: u32,
+    pub new_rate_bps: u32,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VestingPeriodUpdatedEvent {
+    pub event_version: u32,
+    pub admin: Address,
+    pub old_period: u64,
+    pub new_period: u64,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TargetDepositsUpdatedEvent {
+    pub event_version: u32,
+    pub admin: Address,
+    pub old_amount: i128,
+    pub new_amount: i128,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MinRewardDistributionUpdatedEvent {
+    pub event_version: u32,
+    pub admin: Address,
+    pub old_amount: i128,
+    pub new_amount: i128,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MaxUnlockLimitUpdatedEvent {
+    pub event_version: u32,
+    pub admin: Address,
+    pub old_limit: u32,
+    pub new_limit: u32,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WithdrawUnlockLimitUpdatedEvent {
+    pub event_version: u32,
+    pub admin: Address,
+    pub old_limit: u32,
+    pub new_limit: u32,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MaxAssetsUpdatedEvent {
+    pub event_version: u32,
+    pub admin: Address,
+    pub old_max: u32,
+    pub new_max: u32,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfigAdminTransferProposedEvent {
+    pub event_version: u32,
+    pub current_admin: Address,
+    pub pending_admin: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfigAdminTransferAcceptedEvent {
+    pub event_version: u32,
+    pub previous_admin: Address,
+    pub new_admin: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfigPausedEvent {
+    pub event_version: u32,
+    pub admin: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfigUnpausedEvent {
+    pub event_version: u32,
+    pub admin: Address,
+    pub timestamp: u64,
+}
+
+// ---------------------------------------------------------------------------
+// Asset registry — protocol identifier and action symbols
+// ---------------------------------------------------------------------------
+
+/// Protocol identifier used as Topic 1 for all asset registry events.
+pub const PROTOCOL_ASSETS: Symbol = symbol_short!("AxAsset");
+
+pub const ACT_ASSET_REG: Symbol = symbol_short!("ast_reg");
+pub const ACT_ASSET_DEREG: Symbol = symbol_short!("ast_dreg");
+pub const ACT_ASSET_STATUS: Symbol = symbol_short!("ast_stat");
+pub const ACT_ASSET_ADM_P: Symbol = symbol_short!("ast_adm_p");
+pub const ACT_ASSET_ADM_A: Symbol = symbol_short!("ast_adm_a");
+pub const ACT_ASSET_PAUSE: Symbol = symbol_short!("ast_pause");
+pub const ACT_ASSET_UNPAU: Symbol = symbol_short!("ast_unpau");
+
+// ---------------------------------------------------------------------------
+// Asset registry event payload structs
+// ---------------------------------------------------------------------------
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AssetRegisteredEvent {
+    pub event_version: u32,
+    pub asset: Address,
+    pub name: Bytes,
+    pub symbol: Bytes,
+    pub decimals: u32,
+    pub registered_by: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AssetDeregisteredEvent {
+    pub event_version: u32,
+    pub asset: Address,
+    pub deregistered_by: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AssetStatusChangedEvent {
+    pub event_version: u32,
+    pub asset: Address,
+    pub is_active: bool,
+    pub changed_by: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AssetRegistryAdminTransferProposedEvent {
+    pub event_version: u32,
+    pub current_admin: Address,
+    pub pending_admin: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AssetRegistryAdminTransferAcceptedEvent {
+    pub event_version: u32,
+    pub previous_admin: Address,
+    pub new_admin: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AssetRegistryPausedEvent {
+    pub event_version: u32,
+    pub admin: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AssetRegistryUnpausedEvent {
+    pub event_version: u32,
+    pub admin: Address,
+    pub timestamp: u64,
 }

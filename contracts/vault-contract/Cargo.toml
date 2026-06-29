@@ -10,9 +10,12 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 soroban-sdk = "22.0.0"
+axionvera-auth = { path = "../auth" }
 axionvera-events = { path = "../events" }
+axionvera-accounting = { path = "../accounting" }
 axionvera-core = { path = "../core" }
 axionvera-interfaces = { path = "../interfaces" }
+axionvera-security = { path = "../security" }
 
 [dev-dependencies]
 proptest = "1.6.0"
