@@ -1,15 +1,20 @@
 #![no_std]
 
-use soroban_sdk::{contracttype, Address, Env, Map, Symbol, Vec};
+use soroban_sdk::{contracttype, Address, Bytes, Env, Map, Symbol, Vec};
 
 use axionvera_events as events;
+use axionvera_resources::{ResourceError, ResourceInfo, ResourceState};
 use axionvera_state::{
     GovernanceState, RewardState, StateError, StakingState, TreasuryState, VaultState,
 };
 use axionvera_storage::{
-    get_governance_state, get_reward_state, get_staking_state, get_treasury_state, get_vault_state,
+    create_resource as storage_create_resource, get_governance_state, get_reward_state,
+    get_staking_state, get_treasury_state, get_vault_state, list_resources as storage_list_resources,
+    resource_exists as storage_resource_exists, resource_count as storage_resource_count,
     set_governance_state, set_reward_state, set_staking_state, set_treasury_state, set_vault_state,
+    transition_resource as storage_transition_resource,
 };
+use axionvera_snapshots as snapshots;
 
 /// Maximum number of event log entries stored per user index.
 const MAX_EVENTS_PER_USER: u32 = 50;
@@ -215,4 +220,27 @@ impl CoreContract {
 
         // 2. Continue with normal critical action...
     }
+}
+// ===========================================================================
+// SNAPSHOT INTEGRATION
+// ===========================================================================
+
+/// Take a protocol snapshot.
+pub fn take_snapshot(e: &Env) -> Result<snapshots::ProtocolSnapshot, snapshots::SnapshotError> {
+    snapshots::take_snapshot(e, None)
+}
+
+/// Get a protocol snapshot by ID.
+pub fn get_snapshot(e: &Env, id: u64) -> Option<snapshots::ProtocolSnapshot> {
+    snapshots::get_snapshot(e, id)
+}
+
+/// Get the latest protocol snapshot.
+pub fn get_latest_snapshot(e: &Env) -> Option<snapshots::ProtocolSnapshot> {
+    snapshots::get_latest_snapshot(e)
+}
+
+/// Get the protocol snapshot history.
+pub fn get_snapshot_history(e: &Env, limit: u32) -> Vec<snapshots::ProtocolSnapshot> {
+    snapshots::get_snapshot_history(e, limit)
 }

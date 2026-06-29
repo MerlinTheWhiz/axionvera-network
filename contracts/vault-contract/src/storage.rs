@@ -1,12 +1,16 @@
-use soroban_sdk::{contracttype, Address, Env, Map};
+use soroban_sdk::{contracttype, Address, Env, Map, Vec};
 
 use crate::errors::{
+    ArithmeticError, AuthorizationError, BalanceError, StateError, ValidationError, VaultError,
     ArithmeticError, AuthorizationError, BalanceError, DelegationError, StateError, ValidationError,
     VaultError,
+    ArithmeticError, AuthorizationError, BalanceError, DelegationError, StateError,
+    ValidationError, VaultError,
 };
 
 pub const PRECISION_FACTOR: i128 = 1_000_000_000;
 const REWARD_INDEX_SCALE: i128 = PRECISION_FACTOR;
+const LOCK_WEIGHT_SCALE: i128 = 10_000;
 
 const INSTANCE_TTL_THRESHOLD: u32 = 518_400;
 const INSTANCE_TTL_EXTEND_TO: u32 = 518_400;
@@ -24,16 +28,28 @@ pub struct MultiplierPoint {
     pub multiplier_bps: u32,
 }
 
+/// A configured lock duration and its reward multiplier.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LockDurationModel {
+    /// Duration in seconds the funds must remain locked.
+    pub duration_seconds: u64,
+    /// Reward multiplier in basis points applied while the lock is active.
+    pub reward_multiplier_bps: u32,
+}
+
 /// A time-locked deposit entry for a user.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Lock {
     /// The amount of tokens locked.
     pub amount: i128,
+    /// The configured lock duration in seconds.
+    pub duration_seconds: u64,
     /// The timestamp at which the lock expires.
     pub unlock_timestamp: u64,
-    /// Reserved for future reward multiplier on locked funds.
-    pub reward_multiplier: u32,
+    /// Reward multiplier in basis points for this specific lock.
+    pub reward_multiplier_bps: u32,
 }
 
 /// Keys used to store data in the contract's storage.
@@ -60,12 +76,20 @@ pub enum DataKey {
     TargetDeposits,
     /// Multiplier points for dynamic reward calculation
     UtilizationMultipliers,
+    /// Total stake measured in weighted units for reward accounting
+    WeightedTotalDeposits,
+    /// Configured lock duration models
+    LockDurationModels,
     /// Reentrancy guard flag
     ReentrancyGuard,
     /// Pause flag
     IsPaused,
     /// User balance (legacy, kept for backwards compatibility)
     UserBalance(Address),
+    /// User liquid balance separated from locked funds
+    UserLiquidBalance(Address),
+    /// User lock entries
+    UserLocks(Address),
     /// User's last synced reward index (legacy, kept for backwards compatibility)
     UserRewardIndex(Address),
     /// User's accrued but unvested rewards (legacy, kept for backwards compatibility)
@@ -101,6 +125,8 @@ pub enum DataKey {
     DelegationOperators(Address),
     /// Maximum number of delegations allowed per user
     MaxDelegationsPerUser,
+    UserLiquidBalance(Address),
+    UserLocks(Address),
 }
 
 /// The global state of the vault contract.
@@ -115,6 +141,8 @@ pub struct VaultState {
     pub reward_token: Address,
     /// The total amount of deposit tokens currently held by the vault.
     pub total_deposits: i128,
+    /// The total amount of stake measured in weighted units for reward accounting.
+    pub weighted_total_deposits: i128,
     /// The global reward index that tracks cumulative rewards per unit of deposit.
     pub reward_index: i128,
     /// The vesting period in seconds.
@@ -127,6 +155,18 @@ pub struct VaultState {
     pub total_penalties: i128,
     /// A list of points defining the utilization-to-reward multiplier curve.
     pub utilization_multipliers: soroban_sdk::Vec<MultiplierPoint>,
+    /// The configured lock duration models.
+    pub lock_duration_models: soroban_sdk::Vec<LockDurationModel>,
+}
+
+/// A tranche of rewards that vests linearly from `start_timestamp`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VestingSchedule {
+    pub amount: i128,
+    pub claimed: i128,
+    pub start_timestamp: u64,
+    pub duration: u64,
 }
 
 /// Snapshot of a user's position in the vault for a specific asset.
@@ -149,6 +189,17 @@ pub struct UserPosition {
 pub struct MultiAssetPosition {
     /// Map of asset address to user position
     pub positions: Map<Address, UserPosition>,
+}
+
+/// Legacy delegate authorization used by delegate-specific entrypoints.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DelegateAuthorization {
+    pub owner: Address,
+    pub delegate: Address,
+    pub permissions: u32,
+    pub created_at: u64,
+    pub active: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -207,6 +258,8 @@ pub struct UserRewardSnapshot {
     pub rewards: i128,
     /// The amount of vested rewards available to claim.
     pub vested_rewards: i128,
+    /// Number of active vesting schedules included in the snapshot.
+    pub vesting_schedule_count: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -262,6 +315,9 @@ pub fn initialize_state(
         .instance()
         .set(&DataKey::VestingPeriod, &vesting_period);
     e.storage().instance().set(&DataKey::TotalDeposits, &0_i128);
+    e.storage()
+        .instance()
+        .set(&DataKey::WeightedTotalDeposits, &0_i128);
     e.storage().instance().set(&DataKey::RewardIndex, &0_i128);
     e.storage()
         .instance()
@@ -273,10 +329,29 @@ pub fn initialize_state(
     e.storage()
         .instance()
         .set(&DataKey::UtilizationMultipliers, utilization_multipliers);
+    e.storage().instance().set(
+        &DataKey::LockDurationModels,
+        &default_lock_duration_models(e),
+    );
     e.storage()
         .instance()
         .set(&DataKey::ReentrancyGuard, &false);
     e.storage().instance().set(&DataKey::IsPaused, &false);
+
+    // Register the legacy deposit token as the first multi-asset vault asset so
+    // legacy and asset-scoped entrypoints share the same supported-asset registry.
+    let mut supported_assets = Map::new(e);
+    supported_assets.set(deposit_token.clone(), true);
+    e.storage()
+        .instance()
+        .set(&DataKey::SupportedAssets, &supported_assets);
+    e.storage()
+        .instance()
+        .set(&DataKey::AssetTotalDeposits(deposit_token.clone()), &0_i128);
+    e.storage()
+        .instance()
+        .set(&DataKey::AssetRewardIndex(deposit_token.clone()), &0_i128);
+
     bump_instance_ttl(e);
 }
 
@@ -306,6 +381,11 @@ pub fn get_state(e: &Env) -> Result<VaultState, VaultError> {
         .instance()
         .get(&DataKey::TotalDeposits)
         .unwrap_or(0_i128);
+    let weighted_total_deposits = e
+        .storage()
+        .instance()
+        .get(&DataKey::WeightedTotalDeposits)
+        .unwrap_or(0_i128);
     let reward_index = e
         .storage()
         .instance()
@@ -326,6 +406,11 @@ pub fn get_state(e: &Env) -> Result<VaultState, VaultError> {
         .instance()
         .get(&DataKey::UtilizationMultipliers)
         .unwrap_or_else(|| soroban_sdk::Vec::new(e));
+    let lock_duration_models = e
+        .storage()
+        .instance()
+        .get(&DataKey::LockDurationModels)
+        .unwrap_or_else(|| default_lock_duration_models(e));
     let penalty_rate_bps = e
         .storage()
         .instance()
@@ -342,12 +427,14 @@ pub fn get_state(e: &Env) -> Result<VaultState, VaultError> {
         deposit_token,
         reward_token,
         total_deposits,
+        weighted_total_deposits,
         reward_index,
         vesting_period,
         target_deposits,
         penalty_rate_bps,
         total_penalties,
         utilization_multipliers,
+        lock_duration_models,
     })
 }
 
@@ -424,6 +511,17 @@ pub fn set_total_deposits(e: &Env, total: i128) {
     bump_instance_ttl(e);
 }
 
+pub fn get_weighted_total_deposits(e: &Env) -> Result<i128, VaultError> {
+    Ok(get_state(e)?.weighted_total_deposits)
+}
+
+pub fn set_weighted_total_deposits(e: &Env, total: i128) {
+    e.storage()
+        .instance()
+        .set(&DataKey::WeightedTotalDeposits, &total);
+    bump_instance_ttl(e);
+}
+
 pub fn get_reward_index(e: &Env) -> Result<i128, VaultError> {
     require_initialized(e)?;
     let index = e
@@ -470,6 +568,20 @@ pub fn set_utilization_multipliers(e: &Env, multipliers: &soroban_sdk::Vec<Multi
     bump_instance_ttl(e);
 }
 
+pub fn get_lock_duration_models(e: &Env) -> soroban_sdk::Vec<LockDurationModel> {
+    e.storage()
+        .instance()
+        .get(&DataKey::LockDurationModels)
+        .unwrap_or_else(|| default_lock_duration_models(e))
+}
+
+pub fn set_lock_duration_models(e: &Env, models: &soroban_sdk::Vec<LockDurationModel>) {
+    e.storage()
+        .instance()
+        .set(&DataKey::LockDurationModels, models);
+    bump_instance_ttl(e);
+}
+
 pub fn get_penalty_rate_bps(e: &Env) -> Result<u32, VaultError> {
     require_initialized(e)?;
     let rate = e
@@ -481,7 +593,12 @@ pub fn get_penalty_rate_bps(e: &Env) -> Result<u32, VaultError> {
     Ok(rate)
 }
 
-pub fn authorize_delegate(e: &Env, owner: &Address, delegate: &Address, permissions: u32) -> Result<(), VaultError> {
+pub fn authorize_delegate(
+    e: &Env,
+    owner: &Address,
+    delegate: &Address,
+    permissions: u32,
+) -> Result<(), VaultError> {
     require_initialized(e)?;
     let record = DelegateAuthorization {
         owner: owner.clone(),
@@ -490,33 +607,34 @@ pub fn authorize_delegate(e: &Env, owner: &Address, delegate: &Address, permissi
         created_at: e.ledger().timestamp(),
         active: true,
     };
-    e.storage().instance().set(&DataKey::DelegatePermissions(owner.clone(), delegate.clone()), &record);
+    e.storage().instance().set(&DataKey::delegate_permissions(owner.clone(), delegate.clone()), &record);
     bump_instance_ttl(e);
     Ok(())
 }
 
 pub fn revoke_delegate(e: &Env, owner: &Address, delegate: &Address) -> Result<(), VaultError> {
     require_initialized(e)?;
-    e.storage().instance().remove(&DataKey::DelegatePermissions(owner.clone(), delegate.clone()));
+    e.storage().instance().remove(&DataKey::delegate_permissions(owner.clone(), delegate.clone()));
     bump_instance_ttl(e);
     Ok(())
 }
 
-pub fn get_delegate_permissions(e: &Env, owner: &Address, delegate: &Address) -> Result<u32, VaultError> {
+pub fn get_delegate_permissions(
+    e: &Env,
+    owner: &Address,
+    delegate: &Address,
+) -> Result<u32, VaultError> {
     require_initialized(e)?;
     let record = e
         .storage()
         .instance()
-        .get::<_, DelegateAuthorization>(&DataKey::DelegatePermissions(owner.clone(), delegate.clone()));
+        .get::<_, DelegateAuthorization>(&DataKey::delegate_permissions(owner.clone(), delegate.clone()));
     match record {
         Some(auth) if auth.active => {
             bump_instance_ttl(e);
             Ok(auth.permissions)
         }
-        _ => {
-            bump_instance_ttl(e);
-            Ok(0)
-        }
+        _ => Ok(0),
     }
 }
 
@@ -529,7 +647,7 @@ pub fn require_delegate_permission(
     let record = e
         .storage()
         .instance()
-        .get::<_, DelegateAuthorization>(&DataKey::DelegatePermissions(owner.clone(), delegate.clone()));
+        .get::<_, DelegateAuthorization>(&DataKey::delegate_permissions(owner.clone(), delegate.clone()));
     match record {
         Some(auth) if auth.active && (auth.permissions & permission) != 0 => Ok(()),
         _ => Err(AuthorizationError::Unauthorized.into()),
@@ -820,6 +938,16 @@ pub fn get_liquid_balance_unchecked(e: &Env, user: &Address) -> i128 {
     balance
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DelegateAuthorization {
+    pub owner: Address,
+    pub delegate: Address,
+    pub permissions: u32,
+    pub created_at: u64,
+    pub active: bool,
+}
+
 fn set_liquid_balance(e: &Env, user: &Address, amount: i128) {
     let key = DataKey::UserLiquidBalance(user.clone());
     if amount == 0 {
@@ -856,10 +984,45 @@ pub fn get_user_locks_unchecked(e: &Env, user: &Address) -> soroban_sdk::Vec<Loc
 
 fn set_user_locks(e: &Env, user: &Address, locks: &soroban_sdk::Vec<Lock>) {
     let key = DataKey::UserLocks(user.clone());
-    e.storage().persistent().set(&key, locks);
-    if !locks.is_empty() {
+    if locks.is_empty() {
+        e.storage().persistent().remove(&key);
+    } else {
+        e.storage().persistent().set(&key, locks);
         bump_persistent_ttl(e, &key);
     }
+}
+
+fn collect_expired_locks(
+    e: &Env,
+    user: &Address,
+    limit: u32,
+) -> Result<(i128, i128, soroban_sdk::Vec<Lock>), VaultError> {
+    let locks = get_user_locks_unchecked(e, user);
+    let mut unlocked_amount: i128 = 0;
+    let mut weighted_reduction: i128 = 0;
+    let mut new_locks = soroban_sdk::Vec::new(e);
+    let mut processed_count = 0;
+    let current_timestamp = e.ledger().timestamp();
+
+    if limit == 0 {
+        return Ok((0, 0, locks));
+    }
+
+    for lock in locks.iter() {
+        if lock.unlock_timestamp <= current_timestamp && processed_count < limit {
+            unlocked_amount = unlocked_amount
+                .checked_add(lock.amount)
+                .ok_or(ArithmeticError::Overflow)?;
+            weighted_reduction = weighted_reduction
+                .checked_add(checked_lock_bonus(lock.amount, lock.reward_multiplier_bps)?)
+                .ok_or(ArithmeticError::Overflow)?;
+            processed_count += 1;
+        } else {
+            new_locks.push_back(lock);
+        }
+    }
+
+    Ok((unlocked_amount, weighted_reduction, new_locks))
 }
 
 // ---------------------------------------------------------------------------
@@ -875,7 +1038,7 @@ pub fn store_deposit(
     let mut position = get_user_position_unchecked(e, user)?;
 
     // Accrue rewards earned up to this point using the old balance.
-    accrue_position_rewards(e, &state, &mut position)?;
+    accrue_position_rewards(e, &state, user, &mut position)?;
 
     // Update total balance for reward calculation purposes in the returned position.
     position.balance = position
@@ -891,14 +1054,20 @@ pub fn store_deposit(
         .total_deposits
         .checked_add(amount)
         .ok_or(ArithmeticError::Overflow)?;
+    let next_weighted_total = state
+        .weighted_total_deposits
+        .checked_add(weighted_liquid_amount(amount)?)
+        .ok_or(ArithmeticError::Overflow)?;
 
     set_liquid_balance(e, user, new_liquid_balance);
     set_total_deposits(e, next_total);
+    set_weighted_total_deposits(e, next_weighted_total);
     set_user_position(e, user, &position);
 
     Ok((
         VaultState {
             total_deposits: next_total,
+            weighted_total_deposits: next_weighted_total,
             ..state
         },
         position,
@@ -914,18 +1083,23 @@ pub fn store_withdraw(
     let mut position = get_user_position_unchecked(e, user)?;
 
     // Accrue rewards earned up to this point using the old balance.
-    accrue_position_rewards(e, &state, &mut position)?;
+    accrue_position_rewards(e, &state, user, &mut position)?;
 
     // To prevent DoS, process a small batch of expired locks automatically.
     // If more locks are expired, the user must call `unlock_expired` manually.
     const WITHDRAW_UNLOCK_LIMIT: u32 = 5;
-    // Process any expired locks, moving them to the liquid balance.
-    unlock_expired_locks(e, user, WITHDRAW_UNLOCK_LIMIT)?;
+    let (unlockable_amount, _, _) = collect_expired_locks(e, user, WITHDRAW_UNLOCK_LIMIT)?;
 
     let liquid_balance = get_liquid_balance_unchecked(e, user);
-    if liquid_balance < amount {
+    let available_balance = liquid_balance
+        .checked_add(unlockable_amount)
+        .ok_or(ArithmeticError::Overflow)?;
+    if available_balance < amount {
         return Err(BalanceError::InsufficientBalance.into());
     }
+
+    // Process any expired locks, moving them to the liquid balance.
+    unlock_expired_locks(e, user, WITHDRAW_UNLOCK_LIMIT)?;
 
     // Update total balance for reward calculation purposes.
     position.balance = position
@@ -933,7 +1107,10 @@ pub fn store_withdraw(
         .checked_sub(amount)
         .ok_or(ArithmeticError::Overflow)?;
 
-    // Update liquid balance and total contract deposits.
+    // Update liquid balance and total contract deposits using the post-unlock
+    // balance, since `unlock_expired_locks` may have already moved funds into
+    // the liquid bucket.
+    let liquid_balance = get_liquid_balance_unchecked(e, user);
     let new_liquid_balance = liquid_balance
         .checked_sub(amount)
         .ok_or(ArithmeticError::Overflow)?;
@@ -941,14 +1118,20 @@ pub fn store_withdraw(
         .total_deposits
         .checked_sub(amount)
         .ok_or(ArithmeticError::Overflow)?;
+    let weighted_total = get_weighted_total_deposits(e)?;
+    let next_weighted_total = weighted_total
+        .checked_sub(weighted_liquid_amount(amount)?)
+        .ok_or(ArithmeticError::Overflow)?;
 
     set_liquid_balance(e, user, new_liquid_balance);
     set_total_deposits(e, next_total);
+    set_weighted_total_deposits(e, next_weighted_total);
     set_user_position(e, user, &position);
 
     Ok((
         VaultState {
             total_deposits: next_total,
+            weighted_total_deposits: next_weighted_total,
             ..state
         },
         position,
@@ -961,32 +1144,43 @@ pub fn store_withdraw(
 
 pub fn store_lock(e: &Env, user: &Address, amount: i128, duration: u64) -> Result<(), VaultError> {
     let state = get_state(e)?;
-    let mut position = get_user_position_unchecked(e, user)?;
-
-    // Accrue rewards before changing balance distribution
-    accrue_position_rewards(e, &state, &mut position)?;
-    set_user_position(e, user, &position);
-
+    let duration_model = find_lock_duration_model(&state.lock_duration_models, duration)?
+        .ok_or(VaultError::UnsupportedLockDuration)?;
     let liquid_balance = get_liquid_balance_unchecked(e, user);
     if liquid_balance < amount {
         return Err(BalanceError::InsufficientBalance.into());
     }
+
+    let mut position = get_user_position_unchecked(e, user)?;
+
+    // Accrue rewards before changing balance distribution.
+    accrue_position_rewards(e, &state, user, &mut position)?;
+    set_user_position(e, user, &position);
 
     // Move funds from liquid to a new lock
     let new_liquid_balance = liquid_balance
         .checked_sub(amount)
         .ok_or(ArithmeticError::Overflow)?;
     set_liquid_balance(e, user, new_liquid_balance);
+    let next_weighted_total = state
+        .weighted_total_deposits
+        .checked_add(checked_lock_bonus(
+            amount,
+            duration_model.reward_multiplier_bps,
+        )?)
+        .ok_or(ArithmeticError::Overflow)?;
+    set_weighted_total_deposits(e, next_weighted_total);
 
     let mut locks = get_user_locks_unchecked(e, user);
     locks.push_back(Lock {
         amount,
+        duration_seconds: duration,
         unlock_timestamp: e
             .ledger()
             .timestamp()
             .checked_add(duration)
             .ok_or(ArithmeticError::Overflow)?,
-        reward_multiplier: 0, // Not implemented yet
+        reward_multiplier_bps: duration_model.reward_multiplier_bps,
     });
     set_user_locks(e, user, &locks);
 
@@ -995,27 +1189,7 @@ pub fn store_lock(e: &Env, user: &Address, amount: i128, duration: u64) -> Resul
 }
 
 pub fn unlock_expired_locks(e: &Env, user: &Address, limit: u32) -> Result<i128, VaultError> {
-    if limit == 0 {
-        return Ok(0);
-    }
-
-    let current_timestamp = e.ledger().timestamp();
-    let locks = get_user_locks_unchecked(e, user);
-
-    let mut unlocked_amount: i128 = 0;
-    let mut new_locks = soroban_sdk::Vec::new(e);
-    let mut processed_count = 0;
-
-    for lock in locks.iter() {
-        if lock.unlock_timestamp <= current_timestamp && processed_count < limit {
-            unlocked_amount = unlocked_amount
-                .checked_add(lock.amount)
-                .ok_or(ArithmeticError::Overflow)?;
-            processed_count += 1;
-        } else {
-            new_locks.push_back(lock);
-        }
-    }
+    let (unlocked_amount, weighted_reduction, new_locks) = collect_expired_locks(e, user, limit)?;
 
     if unlocked_amount > 0 {
         let liquid_balance = get_liquid_balance_unchecked(e, user);
@@ -1024,6 +1198,11 @@ pub fn unlock_expired_locks(e: &Env, user: &Address, limit: u32) -> Result<i128,
             .ok_or(ArithmeticError::Overflow)?;
         set_liquid_balance(e, user, new_liquid_balance);
         set_user_locks(e, user, &new_locks);
+        let weighted_total = get_weighted_total_deposits(e)?;
+        let next_weighted_total = weighted_total
+            .checked_sub(weighted_reduction)
+            .ok_or(ArithmeticError::Overflow)?;
+        set_weighted_total_deposits(e, next_weighted_total);
     }
 
     Ok(unlocked_amount)
@@ -1049,7 +1228,8 @@ pub fn store_reward_distribution(e: &Env, amount: i128) -> Result<VaultState, Va
         .checked_div(10000) // Convert from basis points
         .ok_or(ArithmeticError::RewardCalculationFailed)? as i128;
 
-    let increment = checked_reward_index_increment(effective_amount, state.total_deposits)?;
+    let increment =
+        checked_reward_index_increment(effective_amount, state.weighted_total_deposits)?;
 
     let next_reward_index = state
         .reward_index
@@ -1074,7 +1254,6 @@ pub fn calculate_vested_rewards(
     vesting_period: u64,
 ) -> Result<i128, VaultError> {
     if vesting_period == 0 {
-        // No vesting period, all rewards are immediately vested
         return Ok(position.accrued_rewards);
     }
 
@@ -1082,41 +1261,164 @@ pub fn calculate_vested_rewards(
         return Ok(0);
     }
 
-    let time_elapsed = current_timestamp
-        .checked_sub(position.last_reward_timestamp)
-        .unwrap_or(0);
+    let schedule = VestingSchedule {
+        amount: position.accrued_rewards,
+        claimed: 0,
+        start_timestamp: position.last_reward_timestamp,
+        duration: vesting_period,
+    };
+    calculate_schedule_claimable(current_timestamp, &schedule)
+}
 
-    if time_elapsed >= vesting_period {
-        // All rewards are vested
-        Ok(position.accrued_rewards)
+fn vesting_schedules(e: &Env, key: &DataKey) -> Vec<VestingSchedule> {
+    e.storage()
+        .persistent()
+        .get::<_, Vec<VestingSchedule>>(key)
+        .unwrap_or_else(|| Vec::new(e))
+}
+
+fn set_vesting_schedules(e: &Env, key: &DataKey, schedules: &Vec<VestingSchedule>) {
+    if schedules.is_empty() {
+        e.storage().persistent().remove(key);
     } else {
-        // Calculate partial vesting
-        let vested = (position.accrued_rewards as u128)
-            .checked_mul(time_elapsed as u128)
-            .ok_or(ArithmeticError::Overflow)?
-            .checked_div(vesting_period as u128)
-            .ok_or(ArithmeticError::RewardCalculationFailed)? as i128;
-        Ok(vested)
+        e.storage().persistent().set(key, schedules);
+        bump_persistent_ttl(e, key);
     }
 }
 
+fn calculate_schedule_claimable(
+    current_timestamp: u64,
+    schedule: &VestingSchedule,
+) -> Result<i128, VaultError> {
+    if schedule.amount <= schedule.claimed {
+        return Ok(0);
+    }
+    if schedule.duration == 0 {
+        return schedule
+            .amount
+            .checked_sub(schedule.claimed)
+            .ok_or(ArithmeticError::Overflow.into());
+    }
+
+    let elapsed = current_timestamp
+        .checked_sub(schedule.start_timestamp)
+        .unwrap_or(0);
+    let vested = if elapsed >= schedule.duration {
+        schedule.amount
+    } else {
+        (schedule.amount as u128)
+            .checked_mul(elapsed as u128)
+            .ok_or(ArithmeticError::Overflow)?
+            .checked_div(schedule.duration as u128)
+            .ok_or(ArithmeticError::RewardCalculationFailed)? as i128
+    };
+
+    vested
+        .checked_sub(schedule.claimed)
+        .ok_or(ArithmeticError::Overflow.into())
+}
+
+fn append_vesting_schedule(
+    e: &Env,
+    key: &DataKey,
+    amount: i128,
+    duration: u64,
+) -> Result<(), VaultError> {
+    if amount <= 0 {
+        return Ok(());
+    }
+
+    let mut schedules = vesting_schedules(e, key);
+    schedules.push_back(VestingSchedule {
+        amount,
+        claimed: 0,
+        start_timestamp: e.ledger().timestamp(),
+        duration,
+    });
+    set_vesting_schedules(e, key, &schedules);
+    Ok(())
+}
+
+pub fn active_vesting_schedule_count(e: &Env, user: &Address) -> u32 {
+    vesting_schedules(e, &DataKey::UserRewardVestingSchedules(user.clone())).len()
+}
+
+fn claim_from_schedules(
+    e: &Env,
+    key: &DataKey,
+    current_timestamp: u64,
+) -> Result<i128, VaultError> {
+    let schedules = vesting_schedules(e, key);
+    let mut next = Vec::new(e);
+    let mut total = 0_i128;
+
+    for mut schedule in schedules.iter() {
+        let claimable = calculate_schedule_claimable(current_timestamp, &schedule)?;
+        if claimable > 0 {
+            schedule.claimed = schedule
+                .claimed
+                .checked_add(claimable)
+                .ok_or(ArithmeticError::Overflow)?;
+            total = total
+                .checked_add(claimable)
+                .ok_or(ArithmeticError::Overflow)?;
+        }
+        if schedule.claimed < schedule.amount {
+            next.push_back(schedule);
+        }
+    }
+
+    set_vesting_schedules(e, key, &next);
+    Ok(total)
+}
+
+fn preview_schedules(
+    e: &Env,
+    key: &DataKey,
+    current_timestamp: u64,
+) -> Result<(i128, i128, u32), VaultError> {
+    let schedules = vesting_schedules(e, key);
+    let mut unclaimed = 0_i128;
+    let mut claimable = 0_i128;
+    for schedule in schedules.iter() {
+        unclaimed = unclaimed
+            .checked_add(
+                schedule
+                    .amount
+                    .checked_sub(schedule.claimed)
+                    .ok_or(ArithmeticError::Overflow)?,
+            )
+            .ok_or(ArithmeticError::Overflow)?;
+        claimable = claimable
+            .checked_add(calculate_schedule_claimable(current_timestamp, &schedule)?)
+            .ok_or(ArithmeticError::Overflow)?;
+    }
+    Ok((unclaimed, claimable, schedules.len()))
+}
+
 pub fn store_claimable_rewards(e: &Env, user: &Address) -> Result<i128, VaultError> {
+    // Release any expired locks before calculating claimable rewards so the
+    // user does not continue to earn the lock bonus past expiry.
+    let _ = unlock_expired_locks(e, user, 50)?;
+
     let state = get_state(e)?;
     let mut position = get_user_position_unchecked(e, user)?;
 
-    // Accrue all rewards earned up to the current global index.
+    let before_accrued = position.accrued_rewards;
     accrue_position_rewards(e, &state, &mut position)?;
+    let newly_accrued = position
+        .accrued_rewards
+        .checked_sub(before_accrued)
+        .ok_or(ArithmeticError::Overflow)?;
+    let key = DataKey::UserRewardVestingSchedules(user.clone());
+    append_vesting_schedule(e, &key, newly_accrued, state.vesting_period)?;
 
-    // Calculate vested rewards
     let current_timestamp = e.ledger().timestamp();
-    let vested = calculate_vested_rewards(current_timestamp, &position, state.vesting_period)?;
-
-    // Update position with remaining accrued rewards
+    let vested = claim_from_schedules(e, &key, current_timestamp)?;
     position.accrued_rewards = position
         .accrued_rewards
         .checked_sub(vested)
         .ok_or(ArithmeticError::Overflow)?;
-
     set_user_position(e, user, &position);
 
     Ok(vested)
@@ -1132,15 +1434,32 @@ pub fn preview_user_rewards(e: &Env, user: &Address) -> Result<UserRewardSnapsho
     let mut position = get_user_position_unchecked(e, user)?;
 
     // Calculate accrued rewards without modifying state
-    accrue_position_rewards(e, &state, &mut position)?;
+    accrue_position_rewards(e, &state, user, &mut position)?;
 
     let current_timestamp = e.ledger().timestamp();
-    let vested = calculate_vested_rewards(current_timestamp, &position, state.vesting_period)?;
+    let key = DataKey::UserRewardVestingSchedules(user.clone());
+    let (scheduled_unclaimed, vested, vesting_schedule_count) =
+        preview_schedules(e, &key, current_timestamp)?;
+
+    let unscheduled = position
+        .accrued_rewards
+        .checked_sub(scheduled_unclaimed)
+        .ok_or(ArithmeticError::Overflow)?;
 
     Ok(UserRewardSnapshot {
         reward_index: position.reward_index,
         rewards: position.accrued_rewards,
-        vested_rewards: vested,
+        vested_rewards: vested
+            .checked_add(calculate_vested_rewards(
+                current_timestamp,
+                &UserPosition {
+                    accrued_rewards: unscheduled,
+                    ..position.clone()
+                },
+                state.vesting_period,
+            )?)
+            .ok_or(ArithmeticError::Overflow)?,
+        vesting_schedule_count,
     })
 }
 
@@ -1186,6 +1505,102 @@ pub(crate) fn checked_accrued_rewards(balance: i128, delta: i128) -> Result<i128
         .ok_or(ArithmeticError::RewardCalculationFailed.into())
 }
 
+fn weighted_liquid_amount(amount: i128) -> Result<i128, VaultError> {
+    amount
+        .checked_mul(LOCK_WEIGHT_SCALE)
+        .ok_or(ArithmeticError::Overflow.into())
+}
+
+fn checked_lock_bonus(amount: i128, multiplier_bps: u32) -> Result<i128, VaultError> {
+    let multiplier = i128::from(multiplier_bps);
+    let weighted_amount = amount
+        .checked_mul(multiplier)
+        .ok_or(ArithmeticError::Overflow)?;
+    weighted_amount
+        .checked_sub(weighted_liquid_amount(amount)?)
+        .ok_or(ArithmeticError::Overflow.into())
+}
+
+fn get_user_effective_balance_units_unchecked(e: &Env, user: &Address) -> Result<i128, VaultError> {
+    let liquid_balance = get_liquid_balance_unchecked(e, user);
+    let mut weighted_balance = weighted_liquid_amount(liquid_balance)?;
+    let current_timestamp = e.ledger().timestamp();
+    let locks = get_user_locks_unchecked(e, user);
+    for lock in locks.iter() {
+        if lock.unlock_timestamp <= current_timestamp {
+            continue;
+        }
+        weighted_balance = weighted_balance
+            .checked_add(
+                lock.amount
+                    .checked_mul(i128::from(lock.reward_multiplier_bps))
+                    .ok_or(ArithmeticError::Overflow)?,
+            )
+            .ok_or(ArithmeticError::Overflow)?;
+    }
+    Ok(weighted_balance)
+}
+
+fn find_lock_duration_model(
+    models: &soroban_sdk::Vec<LockDurationModel>,
+    duration_seconds: u64,
+) -> Result<Option<LockDurationModel>, VaultError> {
+    if models.is_empty() {
+        return Ok(None);
+    }
+
+    for model in models.iter() {
+        if model.duration_seconds == duration_seconds {
+            return Ok(Some(model));
+        }
+    }
+
+    Ok(None)
+}
+
+fn default_lock_duration_models(e: &Env) -> soroban_sdk::Vec<LockDurationModel> {
+    let mut models = soroban_sdk::Vec::new(e);
+    models.push_back(LockDurationModel {
+        duration_seconds: 7 * 24 * 60 * 60,
+        reward_multiplier_bps: 11_000,
+    });
+    models.push_back(LockDurationModel {
+        duration_seconds: 30 * 24 * 60 * 60,
+        reward_multiplier_bps: 12_500,
+    });
+    models.push_back(LockDurationModel {
+        duration_seconds: 90 * 24 * 60 * 60,
+        reward_multiplier_bps: 15_000,
+    });
+    models
+}
+
+pub fn validate_lock_duration_models(
+    models: &soroban_sdk::Vec<LockDurationModel>,
+) -> Result<(), VaultError> {
+    if models.is_empty() {
+        return Err(ValidationError::InvalidLockConfiguration.into());
+    }
+
+    let mut previous_duration = 0_u64;
+    let mut previous_multiplier = 10_000_u32;
+    for model in models.iter() {
+        if model.duration_seconds == 0 || model.reward_multiplier_bps < 10_000 {
+            return Err(ValidationError::InvalidLockConfiguration.into());
+        }
+        if model.duration_seconds <= previous_duration {
+            return Err(ValidationError::InvalidLockConfiguration.into());
+        }
+        if model.reward_multiplier_bps < previous_multiplier {
+            return Err(ValidationError::InvalidLockConfiguration.into());
+        }
+        previous_duration = model.duration_seconds;
+        previous_multiplier = model.reward_multiplier_bps;
+    }
+
+    Ok(())
+}
+
 fn calculate_utilization_multiplier(
     total_deposits: i128,
     target_deposits: i128,
@@ -1219,6 +1634,7 @@ fn calculate_utilization_multiplier(
 fn accrue_position_rewards(
     e: &Env,
     state: &VaultState,
+    user: &Address,
     position: &mut UserPosition,
 ) -> Result<(), VaultError> {
     if state.reward_index == position.reward_index || position.balance == 0 {
@@ -1231,7 +1647,8 @@ fn accrue_position_rewards(
             .reward_index
             .checked_sub(position.reward_index)
             .ok_or(ArithmeticError::Overflow)?;
-        let accrued = checked_accrued_rewards(position.balance, delta)?;
+        let weighted_balance = get_user_effective_balance_units_unchecked(e, user)?;
+        let accrued = checked_accrued_rewards(weighted_balance, delta)?;
 
         if accrued > 0 {
             position.accrued_rewards = position
@@ -1550,6 +1967,7 @@ pub fn store_asset_claimable_rewards(
         return Err(ValidationError::InvalidAddress.into());
     }
 
+    let state = get_state(e)?;
     let vesting_period = get_vesting_period(e)?;
     let mut position = get_user_asset_position_unchecked(e, user, asset);
     let asset_reward_index = get_asset_reward_index(e, asset)?;
@@ -1583,6 +2001,7 @@ pub fn preview_user_asset_rewards(
         return Err(ValidationError::InvalidAddress.into());
     }
 
+    let state = get_state(e)?;
     let vesting_period = get_vesting_period(e)?;
     let mut position = get_user_asset_position_unchecked(e, user, asset);
     let asset_reward_index = get_asset_reward_index(e, asset)?;
@@ -1597,6 +2016,7 @@ pub fn preview_user_asset_rewards(
         reward_index: position.reward_index,
         rewards: position.accrued_rewards,
         vested_rewards: vested,
+        vesting_schedule_count: 0,
     })
 }
 
@@ -1755,8 +2175,7 @@ pub fn check_delegation_permission(
     operator: &Address,
     permission: u32,
 ) -> Result<(), VaultError> {
-    let delegation = get_delegation(e, delegator, operator)
-        .ok_or(DelegationError::NotFound)?;
+    let delegation = get_delegation(e, delegator, operator).ok_or(DelegationError::NotFound)?;
 
     // Check expiration.
     let current_ts = e.ledger().timestamp();
@@ -1788,4 +2207,34 @@ pub fn authorize_for_user(
         check_delegation_permission(e, user, operator, permission)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod vesting_schedule_tests {
+    use super::*;
+
+    #[test]
+    fn schedule_claimable_is_linear_and_partial_claim_aware() {
+        let schedule = VestingSchedule {
+            amount: 1_000,
+            claimed: 250,
+            start_timestamp: 100,
+            duration: 100,
+        };
+
+        assert_eq!(calculate_schedule_claimable(150, &schedule).unwrap(), 250);
+        assert_eq!(calculate_schedule_claimable(200, &schedule).unwrap(), 750);
+    }
+
+    #[test]
+    fn zero_duration_schedule_is_immediately_claimable() {
+        let schedule = VestingSchedule {
+            amount: 1_000,
+            claimed: 400,
+            start_timestamp: 100,
+            duration: 0,
+        };
+
+        assert_eq!(calculate_schedule_claimable(100, &schedule).unwrap(), 600);
+    }
 }

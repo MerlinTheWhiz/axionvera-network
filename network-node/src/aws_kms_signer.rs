@@ -52,43 +52,39 @@ impl KmsSigner {
             profile,
             ..Default::default()
         };
-        
+
         Self::with_config(config).await
     }
-    
+
     /// Create a new AWS KMS signer with custom configuration
     pub async fn with_config(config: KmsConfig) -> Result<Self> {
         info!("Initializing AWS KMS signer with key_id: {}", config.key_id);
-        
+
         // Configure AWS SDK
-        let region_provider = RegionProviderChain::first_try(Some(Region::new(config.region.clone())))
-            .or_default_provider();
-        
-        let mut config_loader = aws_config::defaults(BehaviorVersion::latest())
-            .region(region_provider);
-        
+        let region_provider =
+            RegionProviderChain::first_try(Some(Region::new(config.region.clone())))
+                .or_default_provider();
+
+        let mut config_loader =
+            aws_config::defaults(BehaviorVersion::latest()).region(region_provider);
+
         if let Some(profile) = &config.profile {
             config_loader = config_loader.profile_name(profile);
         }
-        
+
         if let Some(endpoint_url) = &config.endpoint_url {
             config_loader = config_loader.endpoint_url(endpoint_url);
         }
-        
-        let sdk_config = config_loader
-            .load()
-            .await;
-        
+
+        let sdk_config = config_loader.load().await;
+
         let client = KmsClient::new(&sdk_config);
-        
-        let signer = Self {
-            client,
-            config,
-        };
-        
+
+        let signer = Self { client, config };
+
         // Test connection
         signer.health_check().await?;
-        
+
         info!("AWS KMS signer initialized successfully");
         Ok(signer)
     }
@@ -96,58 +92,78 @@ impl KmsSigner {
     /// Sign a message hash (32 bytes)
     async fn attempt_sign(&self, message_hash: &[u8]) -> Result<Vec<u8>> {
         debug!("Signing message hash with AWS KMS");
-        
-        let sign_request = self.client
+
+        let sign_request = self
+            .client
             .sign()
             .key_id(&self.config.key_id)
             .message(Blob::new(message_hash))
             .signing_algorithm(aws_sdk_kms::types::SigningAlgorithmSpec::Ed25519)
             .message_type(aws_sdk_kms::types::MessageType::Raw);
-        
+
         let sign_response = timeout(
             Duration::from_millis(self.config.timeout_ms),
-            sign_request.send()
+            sign_request.send(),
         )
         .await
-        .map_err(|_| NetworkError::KmsTimeout(format!("Signing operation timed out after {}ms", self.config.timeout_ms)))?
+        .map_err(|_| {
+            NetworkError::KmsTimeout(format!(
+                "Signing operation timed out after {}ms",
+                self.config.timeout_ms
+            ))
+        })?
         .map_err(|e| self.handle_kms_error(e.into()))?;
-        
+
         let signature_bytes = sign_response
             .signature()
             .ok_or_else(|| NetworkError::Kms("No signature returned from KMS".to_string()))?
             .as_ref()
             .to_vec();
-        
-        debug!("Successfully signed message, signature length: {} bytes", signature_bytes.len());
+
+        debug!(
+            "Successfully signed message, signature length: {} bytes",
+            signature_bytes.len()
+        );
         Ok(signature_bytes)
     }
 
     /// Retrieve and parse the Ed25519 public key from KMS
     async fn attempt_get_public_key(&self) -> Result<PublicKey> {
         debug!("Retrieving public key from AWS KMS");
-        
+
         let response = timeout(
             Duration::from_millis(self.config.timeout_ms),
-            self.client.get_public_key().key_id(&self.config.key_id).send()
+            self.client
+                .get_public_key()
+                .key_id(&self.config.key_id)
+                .send(),
         )
         .await
-        .map_err(|_| NetworkError::KmsTimeout(format!("Public key retrieval timed out after {}ms", self.config.timeout_ms)))?
+        .map_err(|_| {
+            NetworkError::KmsTimeout(format!(
+                "Public key retrieval timed out after {}ms",
+                self.config.timeout_ms
+            ))
+        })?
         .map_err(|e| self.handle_kms_error(e.into()))?;
-        
+
         let spki_bytes = response
             .public_key()
             .ok_or_else(|| NetworkError::Kms("No public key returned from KMS".to_string()))?
             .as_ref();
-        
+
         // For Ed25519, the SPKI is 44 bytes. The last 32 bytes are the raw public key.
         if spki_bytes.len() != 44 {
-             return Err(NetworkError::Kms(format!("Unexpected SPKI length for Ed25519: {}. Expected 44 bytes.", spki_bytes.len())));
+            return Err(NetworkError::Kms(format!(
+                "Unexpected SPKI length for Ed25519: {}. Expected 44 bytes.",
+                spki_bytes.len()
+            )));
         }
 
         let public_key_bytes = &spki_bytes[12..];
         let public_key = PublicKey::from_bytes(public_key_bytes)
             .map_err(|e| NetworkError::Kms(format!("Invalid public key format: {}", e)))?;
-        
+
         Ok(public_key)
     }
 
@@ -159,9 +175,15 @@ impl KmsSigner {
     /// Handle KMS errors
     fn handle_kms_error(&self, error: aws_sdk_kms::Error) -> NetworkError {
         match error {
-            aws_sdk_kms::Error::NotFoundException(e) => NetworkError::Kms(format!("Key not found: {}", e)),
-            aws_sdk_kms::Error::LimitExceededException(e) => NetworkError::KmsRateLimit(e.to_string()),
-            aws_sdk_kms::Error::DependencyTimeoutException(e) => NetworkError::KmsTimeout(e.to_string()),
+            aws_sdk_kms::Error::NotFoundException(e) => {
+                NetworkError::Kms(format!("Key not found: {}", e))
+            }
+            aws_sdk_kms::Error::LimitExceededException(e) => {
+                NetworkError::KmsRateLimit(e.to_string())
+            }
+            aws_sdk_kms::Error::DependencyTimeoutException(e) => {
+                NetworkError::KmsTimeout(e.to_string())
+            }
             _ => NetworkError::Kms(format!("KMS error: {}", error)),
         }
     }
@@ -172,18 +194,18 @@ impl Signer for KmsSigner {
     async fn get_public_key(&self) -> Result<PublicKey> {
         self.attempt_get_public_key().await
     }
-    
+
     async fn sign(&self, message: &[u8]) -> Result<Vec<u8>> {
         // Stellar signs the transaction hash.
         // If the message is already a hash, we use it directly.
         // For simplicity, we assume the input is the hash to be signed.
         self.attempt_sign(message).await
     }
-    
+
     async fn get_key_id(&self) -> Result<String> {
         Ok(self.config.key_id.clone())
     }
-    
+
     async fn health_check(&self) -> Result<bool> {
         match self.attempt_get_public_key().await {
             Ok(_) => Ok(true),

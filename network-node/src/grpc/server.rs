@@ -18,12 +18,15 @@ use crate::error::NetworkError;
 use crate::signing::SigningService;
 use crate::grpc::{
     NetworkServiceImpl, GatewayServiceImpl, HealthServiceImpl, P2PServiceImpl, VaultServiceImpl,
+    ServiceRegistryImpl,
     network::network_service_server::NetworkServiceServer,
     network::vault_service_server::VaultServiceServer,
     network::health_service_server::HealthServiceServer,
     network::p2p_service_server::P2PServiceServer,
+    network::service_registry_server::ServiceRegistryServer,
     gateway::gateway_service_server::GatewayServiceServer,
 };
+use crate::service_registry::ServiceDiscoveryRegistry;
 use crate::state_trie::StateTrie;
 use crate::p2p::P2PManager;
 use crate::chain_params::ChainParameterRegistry;
@@ -127,6 +130,7 @@ pub struct GrpcServer {
     p2p_manager: Arc<P2PManager>,
     signing_service: Arc<SigningService>,
     chain_parameters: Arc<RwLock<ChainParameterRegistry>>,
+    service_registry: Arc<ServiceDiscoveryRegistry>,
 }
 
 impl Clone for GrpcServer {
@@ -138,6 +142,7 @@ impl Clone for GrpcServer {
             p2p_manager: self.p2p_manager.clone(),
             signing_service: self.signing_service.clone(),
             chain_parameters: self.chain_parameters.clone(),
+            service_registry: self.service_registry.clone(),
         }
     }
 }
@@ -158,6 +163,7 @@ impl GrpcServer {
             p2p_manager,
             signing_service,
             chain_parameters,
+            service_registry: Arc::new(ServiceDiscoveryRegistry::new()),
         }
     }
     
@@ -199,6 +205,7 @@ impl GrpcServer {
         let health_service = HealthServiceImpl::new(self.connection_pool.clone());
         let p2p_service = P2PServiceImpl::new(self.p2p_manager.clone());
         let vault_service = VaultServiceImpl::new(self.connection_pool.clone());
+        let service_registry_svc = ServiceRegistryImpl::new(self.service_registry.clone());
 
         let network_service = interceptor(
             NetworkServiceServer::new(network_service)
@@ -227,6 +234,10 @@ impl GrpcServer {
             .add_service(
                 P2PServiceServer::new(p2p_service)
                     .max_decoding_message_size(8 * 1024 * 1024) // 8MB for P2P messages
+            )
+            .add_service(
+                ServiceRegistryServer::new(service_registry_svc)
+                    .max_decoding_message_size(1024 * 1024)
             );
 
         // Add gRPC-Web support for browser clients

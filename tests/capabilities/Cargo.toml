@@ -1,0 +1,12 @@
+[package]
+name = "axionvera-capabilities-tests"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+axionvera-capabilities = { path = "../../contracts/capabilities" }
+axionvera-events = { path = "../../contracts/events" }
+axionvera-interfaces = { path = "../../contracts/interfaces" }
+soroban-sdk = { version = "22.0.0", features = ["testutils"] }

@@ -229,3 +229,36 @@ sequenceDiagram
 - **Storage layout**: The new WASM must preserve the `DataKey` enum variant order. Adding new variants is safe; reordering or removing existing variants is not.
 - **Event audit trail**: Every upgrade emits an `upgrade` event containing the admin and the new WASM hash, enabling off-chain monitors to detect and verify upgrades.
 - **Test before deploying**: Always test the upgrade path on Futurenet before deploying to Testnet or Mainnet.
+
+## Permission Delegation Layer
+
+Axionvera includes a secure permission delegation layer that allows contracts and users to delegate specific operations to trusted modules while enforcing strict authorization boundaries.
+
+### Overview
+
+The delegation layer enables "Module-to-Module" or "User-to-Module" authorization. Instead of granting full administrative access, a delegator can grant a delegatee the right to call a specific function (operation) for a limited time.
+
+### Key Components
+
+- **`ContractDelegation` Trait**: Defines the interface for managing delegations (`delegate`, `revoke_delegation`, `get_delegation`, `is_authorized`).
+- **`DelegationManager`**: A core utility that handles the storage and validation of `DelegationRule`s.
+- **`DelegatedPolicy`**: An implementation of the `AccessPolicy` trait that allows easy integration of delegation checks into contract functions.
+
+### Security Model
+
+1. **Strict Authorization**: Every delegation action (`delegate` or `revoke_delegation`) requires the explicit authorization of the delegator via `require_auth()`.
+2. **Time-Bound**: Delegations include an expiration timestamp. Once expired, the delegation is automatically considered invalid by the `is_authorized` check.
+3. **Operation-Specific**: Delegations are scoped to a single `Symbol` representing the operation, preventing unauthorized access to other functions.
+4. **Privilege Escalation Prevention**: By requiring `delegator.require_auth()`, we ensure that only the entity possessing the original permission can delegate it.
+
+### Workflow
+
+1. **Granting Delegation**: A delegator calls a contract's `delegate` function, providing the `delegatee` address, the `operation` symbol, and an `expiration` timestamp.
+2. **Verification**: When the `delegatee` attempts to perform the operation, the contract uses `DelegatedPolicy` or `DelegationManager::is_authorized` to verify the rule exists and has not expired.
+3. **Revocation**: A delegator can revoke a delegation at any time before it expires.
+
+### Events
+
+The delegation layer emits the following events for auditability:
+- `deleg_g`: Emitted when a delegation is granted (Delegation Granted).
+- `deleg_r`: Emitted when a delegation is revoked (Delegation Revoked).

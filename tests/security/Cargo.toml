@@ -9,4 +9,4 @@ publish = false
 axionvera-auth = { path = "../../contracts/auth" }
 axionvera-security = { path = "../../contracts/security" }
 axionvera-vault-contract = { path = "../../contracts/vault-contract" }
-soroban-sdk = { version = "22.0.0", features = ["testutils"] }
+soroban-sdk = { version = "22.0.1111", features = ["testutils"] }

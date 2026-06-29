@@ -1,0 +1,19 @@
+[package]
+name = "axionvera-fees"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+soroban-sdk = "22.0.0"
+axionvera-accounting = { path = "../accounting" }
+axionvera-events = { path = "../events" }
+axionvera-interfaces = { path = "../interfaces" }
+axionvera-storage = { path = "../storage" }
+
+[dev-dependencies]
+soroban-sdk = { version = "22.0.0", features = ["testutils"] }

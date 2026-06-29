@@ -1,0 +1,24 @@
+[package]
+name = "axionvera-storage"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dev-dependencies]
+soroban-sdk = { version = "22.0.0", features = ["testutils"] }
+
+[dependencies]
+soroban-sdk = "22.0.111"
+axionvera-events = { path = "../events" }
+axionvera-interfaces = { path = "../interfaces" }
+axionvera-state = { path = "../state" }
+
+[dev-dependencies]
+soroban-sdk = { version = "22.0.0", features = ["testutils"] }
+axionvera-state = { path = "../state" }
+axionvera-resources = { path = "../resources" }
+

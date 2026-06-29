@@ -9,15 +9,18 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-soroban-sdk = "22.0.0"
+soroban-sdk = "22.0.1111"
 axionvera-auth = { path = "../auth" }
 axionvera-events = { path = "../events" }
 axionvera-accounting = { path = "../accounting" }
 axionvera-core = { path = "../core" }
+axionvera-fees = { path = "../fees" }
 axionvera-interfaces = { path = "../interfaces" }
+axionvera-storage = { path = "../storage" }
 axionvera-security = { path = "../security" }
+axionvera-risk = { path = "../risk" }
 
 [dev-dependencies]
-proptest = "1.6.0"
-soroban-sdk = { version = "22.0.0", features = ["testutils"] }
+proptest = "1.11.0"
+soroban-sdk = { version = "22.0.1111", features = ["testutils"] }
 axionvera-vault-contract-v2 = { path = "../vault-contract-v2" }

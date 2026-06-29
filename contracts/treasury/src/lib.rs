@@ -5,12 +5,13 @@ use soroban_sdk::{
 };
 
 use axionvera_events::{
-    self, TreasuryDistributionEvent, TreasuryInitializedEvent, TreasuryStrategyConfiguredEvent,
-    ACT_TREASURY_DISTRIBUTE, ACT_TREASURY_INIT, ACT_TREASURY_STRATEGY, EVENT_VERSION, PROTOCOL,
+    self, TreasuryDistributionEvent, TreasuryFeeRecordedEvent, TreasuryInitializedEvent,
+    TreasuryStrategyConfiguredEvent, ACT_TREASURY_DISTRIBUTE, ACT_TREASURY_FEE, ACT_TREASURY_INIT,
+    ACT_TREASURY_STRATEGY, EVENT_VERSION, PROTOCOL,
 };
 use axionvera_interfaces::{
     AllocationRule, AllocationStrategy, AllocationTransfer, TreasuryAllocator,
-    TreasuryDistributionReceipt, TreasuryError, TREASURY_BPS_DENOMINATOR,
+    TreasuryDistributionReceipt, TreasuryError, TreasuryFeeRecord, TREASURY_BPS_DENOMINATOR,
 };
 
 const MAX_ALLOCATION_RULES: u32 = 16;
@@ -25,6 +26,8 @@ pub enum DataKey {
     Asset,
     Strategy(BytesN<32>),
     Distribution(BytesN<32>),
+    Fee(BytesN<32>),
+    TotalFeesRecorded,
     TotalDistributed,
     RecipientDistributed(Address),
 }
@@ -50,7 +53,12 @@ impl TreasuryAllocator for TreasuryContract {
         e.storage().instance().set(&DataKey::Initialized, &true);
         e.storage().instance().set(&DataKey::Admin, &admin);
         e.storage().instance().set(&DataKey::Asset, &asset);
-        e.storage().instance().set(&DataKey::TotalDistributed, &0_i128);
+        e.storage()
+            .instance()
+            .set(&DataKey::TotalFeesRecorded, &0_i128);
+        e.storage()
+            .instance()
+            .set(&DataKey::TotalDistributed, &0_i128);
         bump_instance_ttl(&e);
         emit_initialized(&e, admin, asset);
         Ok(())
@@ -70,6 +78,43 @@ impl TreasuryAllocator for TreasuryContract {
         bump_instance_ttl(&e);
         emit_strategy_configured(&e, &strategy);
         Ok(())
+    }
+
+    fn record_fee(
+        e: Env,
+        caller: Address,
+        fee_id: BytesN<32>,
+        payer: Address,
+        amount: i128,
+    ) -> Result<TreasuryFeeRecord, TreasuryError> {
+        require_admin(&e, &caller)?;
+        if amount <= 0 {
+            return Err(TreasuryError::InvalidAmount);
+        }
+        if e.storage().persistent().has(&DataKey::Fee(fee_id.clone())) {
+            return Err(TreasuryError::DuplicateFee);
+        }
+
+        payer.require_auth();
+        let asset = get_asset(&e)?;
+        let treasury_address = e.current_contract_address();
+        let token = TokenClient::new(&e, &asset);
+        token.transfer(&payer, &treasury_address, &amount);
+        let treasury_balance = token.balance(&treasury_address);
+        record_total_fees(&e, amount)?;
+
+        let record = TreasuryFeeRecord {
+            fee_id: fee_id.clone(),
+            payer,
+            asset,
+            amount,
+            treasury_balance,
+            timestamp: axionvera_events::ledger_timestamp(&e),
+        };
+        e.storage().persistent().set(&DataKey::Fee(fee_id), &record);
+        bump_instance_ttl(&e);
+        emit_fee_recorded(&e, &record);
+        Ok(record)
     }
 
     fn distribute(
@@ -127,6 +172,10 @@ impl TreasuryAllocator for TreasuryContract {
             .get(&DataKey::Strategy(strategy_id))
     }
 
+    fn fee_record(e: Env, fee_id: BytesN<32>) -> Option<TreasuryFeeRecord> {
+        e.storage().persistent().get(&DataKey::Fee(fee_id))
+    }
+
     fn distribution_receipt(
         e: Env,
         distribution_id: BytesN<32>,
@@ -143,11 +192,25 @@ impl TreasuryAllocator for TreasuryContract {
             .unwrap_or(0)
     }
 
+    fn total_fees_recorded(e: Env) -> i128 {
+        e.storage()
+            .instance()
+            .get(&DataKey::TotalFeesRecorded)
+            .unwrap_or(0)
+    }
+
     fn total_distributed(e: Env) -> i128 {
         e.storage()
             .instance()
             .get(&DataKey::TotalDistributed)
             .unwrap_or(0)
+    }
+
+    fn asset_balance(e: Env) -> i128 {
+        let Ok(asset) = get_asset(&e) else {
+            return 0;
+        };
+        TokenClient::new(&e, &asset).balance(&e.current_contract_address())
     }
 }
 
@@ -272,6 +335,21 @@ fn record_recipient_distribution(
     Ok(())
 }
 
+fn record_total_fees(e: &Env, amount: i128) -> Result<(), TreasuryError> {
+    let current = e
+        .storage()
+        .instance()
+        .get(&DataKey::TotalFeesRecorded)
+        .unwrap_or(0_i128);
+    let updated = current
+        .checked_add(amount)
+        .ok_or(TreasuryError::InvalidAmount)?;
+    e.storage()
+        .instance()
+        .set(&DataKey::TotalFeesRecorded, &updated);
+    Ok(())
+}
+
 fn record_total_distribution(e: &Env, amount: i128) -> Result<(), TreasuryError> {
     let current = e
         .storage()
@@ -281,7 +359,9 @@ fn record_total_distribution(e: &Env, amount: i128) -> Result<(), TreasuryError>
     let updated = current
         .checked_add(amount)
         .ok_or(TreasuryError::InvalidAmount)?;
-    e.storage().instance().set(&DataKey::TotalDistributed, &updated);
+    e.storage()
+        .instance()
+        .set(&DataKey::TotalDistributed, &updated);
     Ok(())
 }
 
@@ -320,6 +400,21 @@ fn emit_strategy_configured(e: &Env, strategy: &AllocationStrategy) {
             strategy_id: strategy.id.clone(),
             rule_count: strategy.rules.len(),
             timestamp: axionvera_events::ledger_timestamp(e),
+        },
+    );
+}
+
+fn emit_fee_recorded(e: &Env, record: &TreasuryFeeRecord) {
+    e.events().publish(
+        (PROTOCOL, ACT_TREASURY_FEE),
+        TreasuryFeeRecordedEvent {
+            event_version: EVENT_VERSION,
+            fee_id: record.fee_id.clone(),
+            payer: record.payer.clone(),
+            asset: record.asset.clone(),
+            amount: record.amount,
+            treasury_balance: record.treasury_balance,
+            timestamp: record.timestamp,
         },
     );
 }

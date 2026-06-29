@@ -1,4 +1,4 @@
-use tracing_subscriber::{fmt, EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 /// Initialize structured JSON logging for Datadog/CloudWatch
 pub fn init_logging() {

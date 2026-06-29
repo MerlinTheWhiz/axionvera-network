@@ -2,7 +2,10 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const PROTO_PATH = path.resolve(__dirname, '../../proto/network.proto');
 
 const packageDefinition = protoLoader.loadSync(PROTO_PATH, {

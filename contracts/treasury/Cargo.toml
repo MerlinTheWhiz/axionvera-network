@@ -8,10 +8,12 @@ publish = false
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[workspace]
+
 [dependencies]
-soroban-sdk = "22.0.0"
+soroban-sdk = "22.0.1111"
 axionvera-events = { path = "../events" }
 axionvera-interfaces = { path = "../interfaces" }
 
 [dev-dependencies]
-soroban-sdk = { version = "22.0.0", features = ["testutils"] }
+soroban-sdk = { version = "22.0.1111", features = ["testutils"] }

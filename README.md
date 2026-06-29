@@ -148,3 +148,15 @@ npm test
 - [docs/architecture.md](docs/architecture.md)
 - [ARCHITECTURE.md](ARCHITECTURE.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
+
+## Dynamic Reward Engine
+
+The `contracts/rewards` crate provides a deterministic reward simulation engine for adapting epoch rewards to protocol conditions before distribution. Operators provide a `RewardFormula`, aggregate `ProtocolMetrics`, participant metrics, and a requested reward pool. The engine:
+
+1. Normalizes protocol activity against a target activity score.
+2. Normalizes participation breadth against a target participant count.
+3. Blends both signals with basis-point weights that must sum to 10,000.
+4. Scales emissions between the formula's minimum and maximum emission rates.
+5. Allocates the adjusted pool by each participant's `stake + activity_score`, assigning integer remainder to the final participant so allocations exactly conserve the adjusted pool.
+
+The simulation tests in `contracts/rewards/src/test.rs` document low-activity, target-activity, deterministic replay, pool-conservation, and invalid-input edge cases.

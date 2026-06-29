@@ -1,5 +1,10 @@
 #![no_std]
 
+pub mod delegation;
+
+use delegation::DelegationManager;
+use soroban_sdk::{Address, Env, Symbol};
+
 /// Shared failure reasons emitted by reusable access policies.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum PolicyViolation {
@@ -72,6 +77,23 @@ where
                 Ok(()) => Ok(()),
                 Err(_) => Err(left_error),
             },
+        }
+    }
+}
+
+/// A policy that checks for delegated authorization.
+pub struct DelegatedPolicy {
+    pub delegator: Address,
+    pub operation: Symbol,
+}
+
+impl AccessPolicy<(Env, Address)> for DelegatedPolicy {
+    fn enforce(&self, context: &(Env, Address)) -> Result<(), PolicyViolation> {
+        let (e, delegatee) = context;
+        if DelegationManager::is_authorized(e, self.delegator.clone(), delegatee.clone(), self.operation.clone()) {
+            Ok(())
+        } else {
+            Err(PolicyViolation::Unauthorized)
         }
     }
 }

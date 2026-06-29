@@ -5,6 +5,8 @@
   },
   "auth": [
     [],
+    [],
+    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
@@ -187,11 +189,74 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "LockDurationModels"
                               "symbol": "PenaltyRateBps"
                             }
                           ]
                         },
                         "val": {
+                          "vec": [
+                            {
+                              "map": [
+                                {
+                                  "key": {
+                                    "symbol": "duration_seconds"
+                                  },
+                                  "val": {
+                                    "u64": 604800
+                                  }
+                                },
+                                {
+                                  "key": {
+                                    "symbol": "reward_multiplier_bps"
+                                  },
+                                  "val": {
+                                    "u32": 11000
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "map": [
+                                {
+                                  "key": {
+                                    "symbol": "duration_seconds"
+                                  },
+                                  "val": {
+                                    "u64": 2592000
+                                  }
+                                },
+                                {
+                                  "key": {
+                                    "symbol": "reward_multiplier_bps"
+                                  },
+                                  "val": {
+                                    "u32": 12500
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "map": [
+                                {
+                                  "key": {
+                                    "symbol": "duration_seconds"
+                                  },
+                                  "val": {
+                                    "u64": 7776000
+                                  }
+                                },
+                                {
+                                  "key": {
+                                    "symbol": "reward_multiplier_bps"
+                                  },
+                                  "val": {
+                                    "u32": 15000
+                                  }
+                                }
+                              ]
+                            }
+                          ]
                           "u32": 0
                         }
                       },
@@ -289,11 +354,13 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "UtilizationMultipliers"
                               "symbol": "TotalPenalties"
                             }
                           ]
                         },
                         "val": {
+                          "vec": []
                           "i128": {
                             "hi": 0,
                             "lo": 0
@@ -304,11 +371,13 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "VestingPeriod"
                               "symbol": "UtilizationMultipliers"
                             }
                           ]
                         },
                         "val": {
+                          "u64": 86400
                           "vec": []
                         }
                       },
@@ -316,11 +385,16 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "WeightedTotalDeposits"
                               "symbol": "VestingPeriod"
                             }
                           ]
                         },
                         "val": {
+                          "i128": {
+                            "hi": 0,
+                            "lo": 0
+                          }
                           "u64": 86400
                         }
                       }
@@ -398,6 +472,96 @@
             "ext": "v0"
           },
           6311999
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+            "key": "ledger_key_contract_instance",
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+                "key": "ledger_key_contract_instance",
+                "durability": "persistent",
+                "val": {
+                  "contract_instance": {
+                    "executable": {
+                      "wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                    },
+                    "storage": [
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "Initialized"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "bool": true
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          4095
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+            "key": "ledger_key_contract_instance",
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+                "key": "ledger_key_contract_instance",
+                "durability": "persistent",
+                "val": {
+                  "contract_instance": {
+                    "executable": {
+                      "wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                    },
+                    "storage": [
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "Initialized"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "bool": true
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          4095
         ]
       ],
       [
